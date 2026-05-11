@@ -25,6 +25,43 @@ body {
   height: 100%;
 }
 
+.hud {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 9;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.hud--hidden {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+.hud__panel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(10, 14, 24, 0.74);
+  backdrop-filter: blur(8px);
+}
+
+.hud__label {
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.hud__value {
+  font-size: 1.24rem;
+  color: #fca5a5;
+}
+
 .overlay {
   position: fixed;
   inset: 0;

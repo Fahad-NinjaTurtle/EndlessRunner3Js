@@ -247,22 +247,26 @@ export class RoadManager {
   }
 
   _placeSegmentAhead(anchorSegment, nextSegment) {
+    const lengthOffset = this.config.segmentLengthOffset ?? 0
     nextSegment.position.x = nextSegment.userData.offsetX
     // Exact seam align: next front anchor sits on anchor back anchor.
     nextSegment.position.z =
       anchorSegment.position.z +
       anchorSegment.userData.backAnchorZ -
-      nextSegment.userData.frontAnchorZ
+      nextSegment.userData.frontAnchorZ -
+      lengthOffset
     nextSegment.position.y = anchorSegment.position.y + anchorSegment.userData.backSurfaceY - nextSegment.userData.frontSurfaceY
   }
 
   _placeSegmentBehind(anchorSegment, nextSegment) {
+    const lengthOffset = this.config.segmentLengthOffset ?? 0
     nextSegment.position.x = nextSegment.userData.offsetX
     // Exact seam align (reverse direction): next back anchor sits on anchor front anchor.
     nextSegment.position.z =
       anchorSegment.position.z +
       anchorSegment.userData.frontAnchorZ -
-      nextSegment.userData.backAnchorZ
+      nextSegment.userData.backAnchorZ +
+      lengthOffset
     nextSegment.position.y = anchorSegment.position.y + anchorSegment.userData.frontSurfaceY - nextSegment.userData.backSurfaceY
   }
 

@@ -8,6 +8,12 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="hud" class="hud hud--hidden" aria-live="polite">
+      <div class="hud__panel">
+        <span class="hud__label">Carrots</span>
+        <strong id="coin-count" class="hud__value">0</strong>
+      </div>
+    </div>
     <div id="loading-overlay" class="overlay">
       <div class="overlay__panel">
         <p class="overlay__eyebrow">Endless Runner</p>
@@ -18,6 +24,16 @@
         <p id="loading-progress-text" class="overlay__progress-text">0%</p>
         <button id="start-game-button" class="overlay__button" type="button" hidden>
           Start Game
+        </button>
+      </div>
+    </div>
+    <div id="game-over-overlay" class="overlay overlay--hidden">
+      <div class="overlay__panel">
+        <p class="overlay__eyebrow">Run Ended</p>
+        <h2 class="overlay__title">Game Over</h2>
+        <p class="overlay__progress-text">Carrots collected: <strong id="final-coin-count">0</strong></p>
+        <button id="restart-game-button" class="overlay__button" type="button">
+          Restart Game
         </button>
       </div>
     </div>

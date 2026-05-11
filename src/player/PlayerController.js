@@ -175,6 +175,14 @@ export class PlayerController {
     this._setAction("run", 0.18);
   }
 
+  stopRunning() {
+    this.isActive = false;
+    this.currentSpeed = 0;
+    if (!this.isJumping && !this.isRolling) {
+      this._setAction("idle", 0.12);
+    }
+  }
+
   moveLeft() {
     this.targetLane = clamp(
       this.targetLane - 1,
@@ -331,5 +339,27 @@ export class PlayerController {
 
   getPosition() {
     return this.group ? this.group.position : new THREE.Vector3();
+  }
+
+  getCurrentLaneIndex() {
+    return this.targetLane;
+  }
+
+  setVisible(isVisible) {
+    if (!this.group) return;
+    this.group.visible = Boolean(isVisible);
+  }
+
+  getCollisionData() {
+    if (!this.group) {
+      return { position: new THREE.Vector3(), radius: 0.6, laneIndex: this.targetLane };
+    }
+
+    const radius = Math.max(0.45, this.currentHeight * 0.62);
+    return {
+      position: this.group.position,
+      radius,
+      laneIndex: this.targetLane,
+    };
   }
 }
