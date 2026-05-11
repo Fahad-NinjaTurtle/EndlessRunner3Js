@@ -8,6 +8,8 @@ const DEFAULT_CONFIG = {
   colliderPadding: 0.2,
   obstacleSpawnInterval: { min: 0.55, max: 1.2 },
   coinSpawnInterval: { min: 0.2, max: 0.45 },
+  obstacleFadeInDuration: 0.22,
+  coinFadeInDuration: 0.16,
   difficulty: {
     rampDuration: 90,
     obstacleSpawnScaleMin: 0.42,
@@ -17,10 +19,10 @@ const DEFAULT_CONFIG = {
     {
       id: 'car',
       variantUrls: [
-        '/models/Obstacles/Car.glb',
-        '/models/Obstacles/Car 2.glb',
-        '/models/Obstacles/Car 3.glb',
-        '/models/Obstacles/Car 4.glb',
+        'models/Obstacles/Car.glb',
+        'models/Obstacles/Car 2.glb',
+        'models/Obstacles/Car 3.glb',
+        'models/Obstacles/Car 4.glb',
       ],
       lanes: [0, 2],
       scale: 1,
@@ -31,7 +33,7 @@ const DEFAULT_CONFIG = {
     },
     {
       id: 'tree',
-      url: '/models/Obstacles/Tree Obstacle.glb',
+      url: 'models/Obstacles/Tree Obstacle.glb',
       lanes: [1],
       scale: 1,
       yOffset: 0,
@@ -41,7 +43,7 @@ const DEFAULT_CONFIG = {
     },
     {
       id: 'vlc',
-      url: '/models/Obstacles/Vlc.glb',
+      url: 'models/Obstacles/Vlc.glb',
       lanes: [0, 1, 2],
       scale: 1,
       yOffset: 0,
@@ -52,7 +54,7 @@ const DEFAULT_CONFIG = {
   ],
   coin: {
     id: 'carrot',
-    url: '/models/Carrot.glb',
+    url: 'models/Carrot.glb',
     scale: 1.2,
     yOffset: 0.8,
     lanes: [0, 1, 2],
@@ -80,6 +82,14 @@ function collectMeshes(root) {
     if (obj?.isMesh) meshes.push(obj)
   })
   return meshes
+}
+
+function withMaterials(object, callback) {
+  object.traverse((node) => {
+    if (!node?.isMesh || !node.material) return
+    const materials = Array.isArray(node.material) ? node.material : [node.material]
+    materials.forEach((material) => callback(material, node))
+  })
 }
 
 export class ObstacleSystem {
@@ -267,6 +277,8 @@ export class ObstacleSystem {
     const model = pool?.length ? pool.pop() : def.prototype.clone(true)
     model.scale.setScalar(def.scale ?? 1)
     model.visible = true
+    this._prepareFadeMaterials(model)
+    this._setOpacity(model, 0)
     this.scene.add(model)
     return model
   }
@@ -276,9 +288,38 @@ export class ObstacleSystem {
     if (!def) return
     this.scene.remove(item.model)
     item.model.visible = false
+    this._setOpacity(item.model, 1)
     const pool = this.pools.get(def.id)
     if (!pool) return
     pool.push(item.model)
+  }
+
+  _prepareFadeMaterials(model) {
+    withMaterials(model, (material, node) => {
+      if (!node.userData.__runtimeMaterialCloned) {
+        node.material = Array.isArray(node.material)
+          ? node.material.map((m) => m.clone())
+          : node.material.clone()
+        node.userData.__runtimeMaterialCloned = true
+      }
+      if (Array.isArray(node.material)) {
+        node.material.forEach((m) => {
+          m.transparent = true
+          m.depthWrite = true
+        })
+      } else {
+        node.material.transparent = true
+        node.material.depthWrite = true
+      }
+    })
+  }
+
+  _setOpacity(model, opacity) {
+    const clamped = THREE.MathUtils.clamp(opacity, 0, 1)
+    withMaterials(model, (material) => {
+      material.opacity = clamped
+      material.needsUpdate = true
+    })
   }
 
   _spawnFromDefinition(def, isCoin, playerZ) {
@@ -308,6 +349,8 @@ export class ObstacleSystem {
       radius,
       halfExtents: loadedDef.colliderHalfExtents?.clone(),
       baseMoveSpeed: loadedDef.movingTowardPlayerSpeed ?? 0,
+      fadeDuration: isCoin ? this.config.coinFadeInDuration : this.config.obstacleFadeInDuration,
+      fadeElapsed: 0,
       isCoin,
     }
 
@@ -328,7 +371,7 @@ export class ObstacleSystem {
   }
 
   update(deltaTime, gameSpeed, playerData) {
-    if (!playerData) return { hit: false, collected: 0 }
+    if (!playerData) return { hit: false, collected: 0, pickupPositions: [] }
 
     const playerPosition = playerData.position
     this.setPlayerLane(playerData.laneIndex ?? this.playerLaneIndex)
@@ -340,10 +383,14 @@ export class ObstacleSystem {
       const towardPlayerSpeed =
         obstacle.groupId === 'car' ? obstacle.baseMoveSpeed * carSpeedScale : obstacle.baseMoveSpeed
       obstacle.model.position.z += (worldScrollSpeed + towardPlayerSpeed) * deltaTime
+      obstacle.fadeElapsed += deltaTime
+      this._setOpacity(obstacle.model, obstacle.fadeElapsed / Math.max(0.01, obstacle.fadeDuration))
     }
     for (const coin of this.activeCoins) {
       coin.model.position.z += worldScrollSpeed * deltaTime
       coin.model.rotation.y += this.config.coin.spinSpeed * deltaTime
+      coin.fadeElapsed += deltaTime
+      this._setOpacity(coin.model, coin.fadeElapsed / Math.max(0.01, coin.fadeDuration))
     }
 
     const despawnZ = playerPosition.z + this.config.despawnBehindOffset
@@ -383,6 +430,7 @@ export class ObstacleSystem {
     const playerHalfExtents = new THREE.Vector3(playerRadius * 0.45, playerRadius * 0.95, playerRadius * 0.62)
     let hit = false
     let collected = 0
+    const pickupPositions = []
     for (const obstacle of this.activeObstacles) {
       const dx = Math.abs(obstacle.model.position.x - playerPosition.x)
       const dy = Math.abs(obstacle.model.position.y - playerPosition.y)
@@ -401,11 +449,12 @@ export class ObstacleSystem {
       const distance = coin.model.position.distanceTo(playerPosition)
       if (distance >= playerRadius + coin.radius) return true
       collected += 1
+      pickupPositions.push(coin.model.position.clone())
       this._despawn(coin, true)
       return false
     })
 
-    return { hit, collected }
+    return { hit, collected, pickupPositions }
   }
 
   _despawn(item) {

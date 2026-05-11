@@ -1,23 +1,23 @@
 export const ROAD_CONFIG = {
   chunks: [
     {
-      url: '/models/Chunk 1.glb',
+      url: 'models/Chunk 1.glb',
       offsetX: 0,
     },
     {
-      url: '/models/Chunk 2.glb',
+      url: 'models/Chunk 2.glb',
       offsetX: 0.7,
     },
     // {
-    //   url: '/models/Chunk 3.glb',
+    //   url: 'models/Chunk 3.glb',
     //   offsetX: 0,
     // },
     {
-      url: '/models/Chunk 4.glb',
+      url: 'models/Chunk 4.glb',
       offsetX: 2.75,
     },
     {
-      url: '/models/Chunk 5.glb',
+      url: 'models/Chunk 5.glb',
       offsetX: -4.7,
     }
   ],
@@ -39,7 +39,7 @@ export const ROAD_CONFIG = {
   skyBottomColor: 0xf1f6ff,
   skyline: {
     enabled: true,
-    modelUrl: '/models/SkyLine.glb',
+    modelUrl: 'models/SkyLine.glb',
     scale: 0.5,
     y: -0.5,
     xOffset: 0,

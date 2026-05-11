@@ -6,10 +6,12 @@ import { RENDER_CONFIG } from '../config/rendererConfig.js'
 import { ROAD_CONFIG } from '../config/roadConfig.js'
 import { PLAYER_CONFIG } from '../config/playerConfig.js'
 import { CONTROLS_CONFIG } from '../config/controlsConfig.js'
+import { AUDIO_CONFIG } from '../config/audioConfig.js'
 import { PlayerController } from '../player/PlayerController.js'
 import { RoadManager } from '../road/RoadManager.js'
 import { PlayerControls } from '../input/PlayerControls.js'
 import { ObstacleSystem } from '../world/ObstacleSystem.js'
+import { AudioManager } from '../audio/AudioManager.js'
 
 const COLOR_SPACE_MAP = {
   SRGBColorSpace: THREE.SRGBColorSpace,
@@ -77,9 +79,12 @@ export class Game {
     this.coinCount = 0
     this.onCoinChange = null
     this.onGameOver = null
+    this.onCoinPickup = null
+    this.onHit = null
     this.deathParticleSystem = null
     this.deathParticleLife = null
     this.deathParticleMaxLife = 1.1
+    this.coinSparkles = []
     this.pendingGameOver = null
     this.gameOverDelay = 520
     this.cameraBaseY = 3.6
@@ -87,6 +92,7 @@ export class Game {
     this.cameraShakeTime = 0
     this.cameraShakeDuration = 0
     this.cameraShakeMagnitude = 0
+    this.audio = new AudioManager(AUDIO_CONFIG)
 
     window.addEventListener('resize', () => this.resize())
   }
@@ -160,6 +166,7 @@ export class Game {
   startGame() {
     if (this.isRunning) return
     this.clearDeathParticles()
+    this.clearCoinSparkles()
     this.pendingGameOver = null
     this.cameraShakeTime = 0
     this.cameraShakeDuration = 0
@@ -167,6 +174,9 @@ export class Game {
     this.coinCount = 0
     if (typeof this.onCoinChange === 'function') this.onCoinChange(this.coinCount)
     this.isRunning = true
+    this.audio.unlockFromUserGesture()
+    this.audio.playBgm()
+    this.audio.playFootsteps()
     this.player.setVisible(true)
     this.player.startRunning()
     this.obstacles.reset()
@@ -177,9 +187,11 @@ export class Game {
     this.clock.getDelta()
   }
 
-  setUIHandlers({ onCoinChange, onGameOver } = {}) {
+  setUIHandlers({ onCoinChange, onGameOver, onCoinPickup, onHit } = {}) {
     this.onCoinChange = typeof onCoinChange === 'function' ? onCoinChange : null
     this.onGameOver = typeof onGameOver === 'function' ? onGameOver : null
+    this.onCoinPickup = typeof onCoinPickup === 'function' ? onCoinPickup : null
+    this.onHit = typeof onHit === 'function' ? onHit : null
   }
 
   stopGame() {
@@ -187,7 +199,81 @@ export class Game {
     this.isRunning = false
     this.player.stopRunning()
     this.obstacles.stop()
+    this.audio.stopFootsteps()
     this.controls.dispose()
+  }
+
+  createCoinSparkle(origin) {
+    const count = 18
+    const positions = new Float32Array(count * 3)
+    const velocities = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+    for (let i = 0; i < count; i += 1) {
+      const idx = i * 3
+      positions[idx] = origin.x
+      positions[idx + 1] = origin.y + 0.2
+      positions[idx + 2] = origin.z
+      const theta = Math.random() * Math.PI * 2
+      const speed = 0.5 + Math.random() * 1.5
+      velocities[idx] = Math.cos(theta) * speed
+      velocities[idx + 1] = 0.9 + Math.random() * 1.6
+      velocities[idx + 2] = Math.sin(theta) * speed
+      colors[idx] = 1
+      colors[idx + 1] = 0.88
+      colors[idx + 2] = 0.26
+    }
+
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    geometry.userData.velocities = velocities
+    const material = new THREE.PointsMaterial({
+      size: 0.08,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      depthTest: false,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+    })
+    const points = new THREE.Points(geometry, material)
+    this.scene.add(points)
+    this.coinSparkles.push({ points, life: 0.35, maxLife: 0.35 })
+  }
+
+  updateCoinSparkles(deltaTime) {
+    if (!this.coinSparkles.length) return
+    this.coinSparkles = this.coinSparkles.filter((sparkle) => {
+      sparkle.life -= deltaTime
+      const geometry = sparkle.points.geometry
+      const positionAttr = geometry.getAttribute('position')
+      const velocities = geometry.userData.velocities
+      if (positionAttr && velocities) {
+        for (let i = 0; i < positionAttr.count; i += 1) {
+          const idx = i * 3
+          velocities[idx + 1] -= 5.6 * deltaTime
+          positionAttr.array[idx] += velocities[idx] * deltaTime
+          positionAttr.array[idx + 1] += velocities[idx + 1] * deltaTime
+          positionAttr.array[idx + 2] += velocities[idx + 2] * deltaTime
+        }
+        positionAttr.needsUpdate = true
+      }
+      sparkle.points.material.opacity = THREE.MathUtils.clamp(sparkle.life / sparkle.maxLife, 0, 1)
+      if (sparkle.life > 0) return true
+      this.scene.remove(sparkle.points)
+      sparkle.points.geometry.dispose()
+      sparkle.points.material.dispose()
+      return false
+    })
+  }
+
+  clearCoinSparkles() {
+    for (const sparkle of this.coinSparkles) {
+      this.scene.remove(sparkle.points)
+      sparkle.points.geometry.dispose()
+      sparkle.points.material.dispose()
+    }
+    this.coinSparkles.length = 0
   }
 
   createDeathBurst(origin) {
@@ -334,12 +420,19 @@ export class Game {
     if (collisionState.collected > 0) {
       this.coinCount += collisionState.collected
       if (typeof this.onCoinChange === 'function') this.onCoinChange(this.coinCount)
+      for (const pickupPos of collisionState.pickupPositions ?? []) {
+        this.createCoinSparkle(pickupPos)
+      }
+      this.audio.playCoin()
+      if (typeof this.onCoinPickup === 'function') this.onCoinPickup({ count: collisionState.collected })
     }
     if (collisionState.hit && this.isRunning) {
       this.pendingGameOver = { coins: this.coinCount, speed: this.player.getCurrentSpeed(), delay: this.gameOverDelay }
       this.createDeathBurst(this.player.getPosition())
       this.player.setVisible(false)
       this.triggerCameraShake()
+      this.audio.playHit()
+      if (typeof this.onHit === 'function') this.onHit()
       this.stopGame()
     }
 
@@ -364,6 +457,7 @@ export class Game {
     const lookZ = playerPosition.z - Math.min(2.0, this.road.getSegmentLength() * 0.15)
     this.camera.lookAt(playerPosition.x, playerPosition.y + 0.35, lookZ)
     this.updateDeathParticles(dt)
+    this.updateCoinSparkles(dt)
     if (this.pendingGameOver) {
       this.pendingGameOver.delay -= dt * 1000
       if (this.pendingGameOver.delay <= 0) {

@@ -1,5 +1,5 @@
 export const PLAYER_CONFIG = {
-  modelUrl: '/models/Player/Player.glb',
+  modelUrl: 'models/Player/Player.glb',
   laneCount: 3,
   defaultLane: 1,
   modelScale: 0.65,
