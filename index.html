@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Endless Runner</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="loading-overlay" class="overlay">
+      <div class="overlay__panel">
+        <p class="overlay__eyebrow">Endless Runner</p>
+        <h1 class="overlay__title">Loading assets</h1>
+        <div class="overlay__progress-track" aria-hidden="true">
+          <div id="loading-progress-bar" class="overlay__progress-bar"></div>
+        </div>
+        <p id="loading-progress-text" class="overlay__progress-text">0%</p>
+        <button id="start-game-button" class="overlay__button" type="button" hidden>
+          Start Game
+        </button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

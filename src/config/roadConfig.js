@@ -1,0 +1,35 @@
+export const ROAD_CONFIG = {
+  chunks: [
+    {
+      url: '/models/Chunk 1.glb',
+      offsetX: 0,
+    },
+    {
+      url: '/models/Chunk 2.glb',
+      offsetX: 0.7,
+    },
+    {
+      url: '/models/Chunk 3.glb',
+      offsetX: 0,
+    }
+  ],
+  segmentCount: 3,
+  laneCount: 3,
+  laneSpacingRatio: 0.32,
+  minLaneSpacing: 1.5,
+  maxLaneSpacing: 3.0,
+  backwardSegmentCount: 0,
+  recycleThresholdOffset: 6.0,
+  backgroundColor: 0xe8f2ff,
+  fogColor: 0xd2e8ff,
+  fogNear: 24,
+  fogFar: 90,
+  cameraFar: 140,
+  skyTopColor: 0x6fb7ff,
+  skyHorizonColor: 0xbfe5ff,
+  skyBottomColor: 0xf1f6ff,
+  fallbackSegmentLength: 10,
+  raycastOriginHeight: 50,
+  seamSampleInset: 1.5,
+  seamSearchStep: 0.5,
+}
