@@ -6,7 +6,7 @@ const DEFAULT_CONFIG = {
   spawnAheadMax: 82,
   despawnBehindOffset: 8,
   colliderPadding: 0.2,
-  obstacleSpawnInterval: { min: 0.55, max: 1.2 },
+  obstacleSpawnInterval: { min: 0.4, max: 0.95 },
   coinSpawnInterval: { min: 0.2, max: 0.45 },
   obstacleFadeInDuration: 0.22,
   coinFadeInDuration: 0.16,
@@ -27,9 +27,9 @@ const DEFAULT_CONFIG = {
       lanes: [0, 2],
       scale: 1,
       yOffset: 0,
-      movingTowardPlayerSpeed: 5.5,
-      weight: 1.1,
-      colliderScale: { x: 0.72, y: 0.72, z: 0.74 },
+      movingTowardPlayerSpeed: 8.5,
+      weight: 2.4,
+      colliderScale: { x: 0.72, y: 0.52, z: 0.74 },
     },
     {
       id: 'tree',
@@ -49,7 +49,7 @@ const DEFAULT_CONFIG = {
       yOffset: 0,
       movingTowardPlayerSpeed: 0,
       weight: 1,
-      colliderScale: { x: 0.66, y: 0.7, z: 0.66 },
+      colliderScale: { x: 0.56, y: 0.7, z: 0.66 },
     },
   ],
   coin: {
@@ -336,6 +336,11 @@ export class ObstacleSystem {
     const y = this._sampleGroundY(x, z) + (loadedDef.yOffset ?? 0)
     const model = this._acquire(loadedDef)
     model.position.set(x, y, z)
+    // All carrots share the same spin phase (world time), so they rotate in sync
+    if (isCoin) {
+      const spinY = this.runTime * (this.config.coin.spinSpeed ?? 0)
+      model.rotation.set(0, spinY, 0)
+    }
 
     this.box.setFromObject(model)
     const radius =
@@ -386,9 +391,10 @@ export class ObstacleSystem {
       obstacle.fadeElapsed += deltaTime
       this._setOpacity(obstacle.model, obstacle.fadeElapsed / Math.max(0.01, obstacle.fadeDuration))
     }
+    const spinY = this.runTime * (this.config.coin.spinSpeed ?? 0)
     for (const coin of this.activeCoins) {
       coin.model.position.z += worldScrollSpeed * deltaTime
-      coin.model.rotation.y += this.config.coin.spinSpeed * deltaTime
+      coin.model.rotation.set(0, spinY, 0)
       coin.fadeElapsed += deltaTime
       this._setOpacity(coin.model, coin.fadeElapsed / Math.max(0.01, coin.fadeDuration))
     }

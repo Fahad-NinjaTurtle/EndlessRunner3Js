@@ -1,7 +1,8 @@
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { addSkyDome } from '../components/environment/addSkyDome.js'
-import { addRunnerLights } from '../components/lights/addRunnerLights.js'
+import { addRunnerLights, updateRunnerLights } from '../components/lights/addRunnerLights.js'
 import { RENDER_CONFIG } from '../config/rendererConfig.js'
 import { ROAD_CONFIG } from '../config/roadConfig.js'
 import { PLAYER_CONFIG } from '../config/playerConfig.js'
@@ -26,11 +27,13 @@ export class Game {
     this.app = app
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(ROAD_CONFIG.backgroundColor ?? ROAD_CONFIG.fogColor ?? 0xbfd9ff)
-    this.scene.fog = new THREE.Fog(
-      ROAD_CONFIG.fogColor ?? 0xbfd9ff,
-      ROAD_CONFIG.fogNear ?? 14,
-      ROAD_CONFIG.fogFar ?? 52,
-    )
+    if (ROAD_CONFIG.sceneFogEnabled === true) {
+      this.scene.fog = new THREE.Fog(
+        ROAD_CONFIG.fogColor ?? 0xbfd9ff,
+        ROAD_CONFIG.fogNear ?? 14,
+        ROAD_CONFIG.fogFar ?? 52,
+      )
+    }
     this.loadingManager = new THREE.LoadingManager()
     this.gltfLoader = new GLTFLoader(this.loadingManager)
     this.renderer = new THREE.WebGLRenderer({
@@ -38,15 +41,24 @@ export class Game {
       alpha: RENDER_CONFIG.alpha,
       powerPreference: 'high-performance',
       stencil: false,
+      logarithmicDepthBuffer: RENDER_CONFIG.logarithmicDepthBuffer ?? false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, RENDER_CONFIG.pixelRatioMax))
+    this._updateRendererPixelRatio()
     this.renderer.outputColorSpace = COLOR_SPACE_MAP[RENDER_CONFIG.colorSpace] ?? THREE.SRGBColorSpace
     this.renderer.toneMapping = TONE_MAPPING_MAP[RENDER_CONFIG.toneMapping.type] ?? THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = RENDER_CONFIG.toneMapping.exposure
     this.renderer.useLegacyLights = RENDER_CONFIG.useLegacyLights
     this.app.appendChild(this.renderer.domElement)
 
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, ROAD_CONFIG.cameraFar ?? 90)
+    this.cameraFovLandscape = ROAD_CONFIG.cameraFovLandscape ?? 55
+    this.cameraFovPortrait = ROAD_CONFIG.cameraFovPortrait ?? 68
+    this.cameraPortrait = false
+    this.camera = new THREE.PerspectiveCamera(
+      this.cameraFovLandscape,
+      1,
+      0.2,
+      ROAD_CONFIG.cameraFar ?? 90,
+    )
     this.scene.add(this.camera)
 
     this.clock = new THREE.Clock()
@@ -63,7 +75,7 @@ export class Game {
     })
     this.skyline = null
     this.skylineBaseY = 0
-    addRunnerLights(this.scene)
+    this.runnerLights = addRunnerLights(this.scene)
 
     this.player = new PlayerController(this.scene, PLAYER_CONFIG, this.loadingManager)
     this.road = new RoadManager(this.scene, ROAD_CONFIG, this.loadingManager)
@@ -93,8 +105,102 @@ export class Game {
     this.cameraShakeDuration = 0
     this.cameraShakeMagnitude = 0
     this.audio = new AudioManager(AUDIO_CONFIG)
+    this._iblFallbackApplied = false
 
     window.addEventListener('resize', () => this.resize())
+  }
+
+  /**
+   * PBR materials need scene.environment for specular. itch.io mobile iframes often report 0×0 canvas on first
+   * layout — PMREM then fails or yields unusable env maps → black road/player band while obstacles look fine.
+   */
+  _setupSceneEnvironment() {
+    const w = this.renderer.domElement.width
+    const h = this.renderer.domElement.height
+    if (w < 64 || h < 64) return false
+
+    try {
+      if (this.scene.environment) {
+        this.scene.environment.dispose()
+        this.scene.environment = null
+      }
+
+      const pmrem = new THREE.PMREMGenerator(this.renderer)
+      pmrem.compileEquirectangularShader()
+      const rt = pmrem.fromScene(new RoomEnvironment())
+      const tex = rt.texture
+      pmrem.dispose()
+      if (!tex) throw new Error('PMREM texture missing')
+
+      this.scene.environment = tex
+      this._iblFallbackApplied = false
+      return true
+    } catch (err) {
+      console.warn('[Game] IBL / PMREM failed (common on mobile if canvas was not sized yet):', err)
+      if (!this._iblFallbackApplied) {
+        this._iblFallbackApplied = true
+        this._applyPBRDiffuseFallback()
+      }
+      return false
+    }
+  }
+
+  /** Last resort when PMREM/env cannot be created — strips metallic reliance so diffuse reads correctly without env */
+  _applyPBRDiffuseFallback() {
+    const fixMat = (m) => {
+      if (!m || (!m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial)) return
+      m.metalness = 0
+      if ('envMapIntensity' in m) m.envMapIntensity = 0
+      if (m.roughness !== undefined) m.roughness = Math.min(1, Math.max(m.roughness, 0.82))
+      m.needsUpdate = true
+    }
+    const walk = (root) => {
+      root?.traverse?.((obj) => {
+        if (!obj.isMesh) return
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+        mats.forEach(fixMat)
+      })
+    }
+    walk(this.player?.group)
+    const meshes = this.road?.getRoadMeshes?.() ?? []
+    for (const mesh of meshes) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach(fixMat)
+    }
+  }
+
+  /**
+   * Road + player GLBs often ship high metalness / env reliance; mobile GPUs + itch iframe can still yield bad IBL reads.
+   * Obstacle assets are usually simpler — hence “only hero + road look black”. Clamp so diffuse always carries the look.
+   */
+  _safeguardRoadAndPlayerMaterials() {
+    const hasEnv = !!this.scene.environment
+    const fixMat = (m) => {
+      if (!m || (!m.isMeshStandardMaterial && !m.isMeshPhysicalMaterial)) return
+      if (!hasEnv) {
+        m.metalness = 0
+        if ('envMapIntensity' in m) m.envMapIntensity = 0
+      } else {
+        m.metalness = THREE.MathUtils.clamp(m.metalness ?? 0, 0, 0.22)
+        if ('envMapIntensity' in m) {
+          m.envMapIntensity = THREE.MathUtils.clamp(m.envMapIntensity ?? 1, 0.45, 1.15)
+        }
+      }
+      if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.42)
+      m.needsUpdate = true
+    }
+    const walk = (root) => {
+      root?.traverse?.((obj) => {
+        if (!obj.isMesh) return
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+        mats.forEach(fixMat)
+      })
+    }
+    walk(this.player?.group)
+    for (const mesh of this.road?.getRoadMeshes?.() ?? []) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      mats.forEach(fixMat)
+    }
   }
 
   async load(onProgress) {
@@ -118,7 +224,11 @@ export class Game {
     this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
     this.resetCamera()
     this.resize()
+    if (!this._setupSceneEnvironment()) {
+      /* itch/mobile: defer until iframe reports real size — see resize() */
+    }
     this.player.snapToGround()
+    this._safeguardRoadAndPlayerMaterials()
 
     if (typeof onProgress === 'function') {
       onProgress({ loaded: 1, total: 1, progress: 1 })
@@ -385,12 +495,33 @@ export class Game {
     this.camera.position.set(0, this.cameraBaseY, this.cameraBaseZ)
   }
 
+  _updateRendererPixelRatio() {
+    const height = this.app?.clientHeight || window.innerHeight
+    const width = this.app?.clientWidth || window.innerWidth
+    const portrait = height > width
+    const cap = portrait
+      ? (RENDER_CONFIG.pixelRatioMaxPortrait ?? RENDER_CONFIG.pixelRatioMax ?? 2)
+      : (RENDER_CONFIG.pixelRatioMax ?? 2)
+    const pr = Math.min(window.devicePixelRatio || 1, cap)
+    this.renderer.setPixelRatio(pr)
+  }
+
   resize() {
     const width = this.app.clientWidth || window.innerWidth
     const height = this.app.clientHeight || window.innerHeight
     this.renderer.setSize(width, height, false)
+    this._updateRendererPixelRatio()
     this.camera.aspect = width / height
+    // Wider vertical FOV on portrait/narrow screens so all lanes stay visible (no lateral camera pan)
+    this.cameraPortrait = height > width
+    this.camera.fov = this.cameraPortrait ? this.cameraFovPortrait : this.cameraFovLandscape
     this.camera.updateProjectionMatrix()
+
+    // Mobile itch embeds: first layout pass may be 0×0 → retry PMREM once canvas is real dimensions
+    if (!this.scene.environment && width >= 64 && height >= 64) {
+      this._setupSceneEnvironment()
+      if (this.scene.environment) this._safeguardRoadAndPlayerMaterials()
+    }
   }
 
   animate(time) {
@@ -437,6 +568,7 @@ export class Game {
     }
 
     const playerPosition = this.player.getPosition()
+    updateRunnerLights(this.runnerLights, playerPosition)
     if (this.skyDome) {
       this.skyDome.position.copy(this.camera.position)
     }
@@ -450,12 +582,23 @@ export class Game {
       )
     }
     const shakeOffset = this.getCameraShakeOffset(dt)
+    // Follow player on X (smooth) and look at the same X — stays behind the runner without the old 0.35× skew “tilt”
+    const followX = this.cameraPortrait
+      ? (ROAD_CONFIG.cameraFollowXLerpPortrait ?? 0.26)
+      : (ROAD_CONFIG.cameraFollowXLerpLandscape ?? 0.14)
     this.camera.position.x =
-      THREE.MathUtils.lerp(this.camera.position.x, playerPosition.x * 0.35, 0.08) + shakeOffset.x
-    this.camera.position.y = this.cameraBaseY + shakeOffset.y
-    this.camera.position.z = this.cameraBaseZ + shakeOffset.z
-    const lookZ = playerPosition.z - Math.min(2.0, this.road.getSegmentLength() * 0.15)
-    this.camera.lookAt(playerPosition.x, playerPosition.y + 0.35, lookZ)
+      THREE.MathUtils.lerp(this.camera.position.x, playerPosition.x, followX) + shakeOffset.x
+    const portraitLift = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitExtraHeight ?? 0) : 0
+    const portraitZ = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitExtraZ ?? 0) : 0
+    this.camera.position.y = this.cameraBaseY + portraitLift + shakeOffset.y
+    this.camera.position.z = this.cameraBaseZ + portraitZ + shakeOffset.z
+    const baseLookAhead = Math.min(2.0, this.road.getSegmentLength() * 0.15)
+    const portraitLookAhead = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitLookAheadExtra ?? 0) : 0
+    const lookZ = playerPosition.z - baseLookAhead - portraitLookAhead
+    const lookYOffset = this.cameraPortrait
+      ? (ROAD_CONFIG.cameraPortraitLookAtYOffset ?? ROAD_CONFIG.cameraLookAtYOffset ?? 0.35)
+      : (ROAD_CONFIG.cameraLookAtYOffset ?? 0.35)
+    this.camera.lookAt(playerPosition.x, playerPosition.y + lookYOffset, lookZ)
     this.updateDeathParticles(dt)
     this.updateCoinSparkles(dt)
     if (this.pendingGameOver) {

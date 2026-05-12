@@ -31,9 +31,31 @@ export const ROAD_CONFIG = {
   recycleThresholdOffset: 6.0,
   backgroundColor: 0xe8f2ff,
   fogColor: 0xd2e8ff,
+  /** Linear THREE.Fog + mobile WebGL often causes a horizontal “dark strip” on flat roads; keep off for itch/mobile stability */
+  sceneFogEnabled: false,
   fogNear: 24,
   fogFar: 90,
   cameraFar: 140,
+  cameraFovLandscape: 55,
+  /** Wider on portrait — narrow screens need extra horizontal field of view */
+  cameraFovPortrait: 68,
+  /** Smooth camera X toward player (same axis as lookAt) — avoids old 0.35 skew + keeps runner on-screen in side lanes */
+  cameraFollowXLerpLandscape: 0.14,
+  /** Snappier follow on mobile so lane changes stay framed */
+  cameraFollowXLerpPortrait: 0.26,
+  /** Portrait: higher rig like Subway Surfers — runner sits lower in frame, more road ahead */
+  cameraPortraitExtraHeight: 1.15,
+  /** Portrait: pull camera slightly further back (negative = more behind player) */
+  cameraPortraitExtraZ: -1.35,
+  /**
+   * Portrait: extra look-ahead along -Z (same axis as current look target).
+   * Larger = aim farther down the track → character drops toward bottom third of screen.
+   */
+  cameraPortraitLookAheadExtra: 11,
+  /** Height added above player root for look-at (landscape) */
+  cameraLookAtYOffset: 0.35,
+  /** Portrait: look-at near road surface ahead (not chest height) */
+  cameraPortraitLookAtYOffset: 0.04,
   skyTopColor: 0x6fb7ff,
   skyHorizonColor: 0xbfe5ff,
   skyBottomColor: 0xf1f6ff,
