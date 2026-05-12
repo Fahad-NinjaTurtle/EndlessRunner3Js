@@ -14,6 +14,12 @@ export const PLAYER_CONFIG = {
     velocity: 10,
     gravity: -24.0,
     minHeight: 0.05,
+    /** Extra gravity multiplier when slamming down from jump (smooth but fast) */
+    fastFallGravityMultiplier: 3.4,
+    /** Added to vertical velocity when starting fast fall */
+    fastFallVelocityBoost: -9,
+    /** After boost, velocity is clamped to at most this (negative = downward), so slam always pulls down quickly */
+    fastFallMinDownVelocity: -7,
   },
   roll: {
     duration: 0.8,

@@ -31,8 +31,6 @@ export const ROAD_CONFIG = {
   recycleThresholdOffset: 6.0,
   backgroundColor: 0xe8f2ff,
   fogColor: 0xd2e8ff,
-  /** Linear THREE.Fog + mobile WebGL often causes a horizontal “dark strip” on flat roads; keep off for itch/mobile stability */
-  sceneFogEnabled: false,
   fogNear: 24,
   fogFar: 90,
   cameraFar: 140,

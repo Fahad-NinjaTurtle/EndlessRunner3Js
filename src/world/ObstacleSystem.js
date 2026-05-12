@@ -6,7 +6,7 @@ const DEFAULT_CONFIG = {
   spawnAheadMax: 82,
   despawnBehindOffset: 8,
   colliderPadding: 0.2,
-  obstacleSpawnInterval: { min: 0.4, max: 0.95 },
+  obstacleSpawnInterval: { min: 0.38, max: 0.82 },
   coinSpawnInterval: { min: 0.2, max: 0.45 },
   obstacleFadeInDuration: 0.22,
   coinFadeInDuration: 0.16,
@@ -28,7 +28,7 @@ const DEFAULT_CONFIG = {
       scale: 1,
       yOffset: 0,
       movingTowardPlayerSpeed: 8.5,
-      weight: 2.4,
+      weight: 2.85,
       colliderScale: { x: 0.72, y: 0.52, z: 0.74 },
     },
     {
@@ -59,11 +59,29 @@ const DEFAULT_CONFIG = {
     yOffset: 0.8,
     lanes: [0, 1, 2],
     spinSpeed: 2.4,
+    /** Spawn bias by lane index [left, center, right]: higher = more likely */
+    laneWeights: [12, 1, 12],
   },
 }
 
 function randomRange(min, max) {
   return min + Math.random() * (max - min)
+}
+
+/** Pick a lane index from `allowedLanes` using per-lane weights (by global lane index). */
+function pickWeightedLaneIndex(allowedLanes, weightsByLaneIndex) {
+  if (!allowedLanes?.length) return 0
+  const weights = allowedLanes.map((laneIdx) => {
+    const w = weightsByLaneIndex?.[laneIdx]
+    return typeof w === 'number' && w > 0 ? w : 1
+  })
+  const total = weights.reduce((a, b) => a + b, 0)
+  let r = Math.random() * total
+  for (let i = 0; i < allowedLanes.length; i++) {
+    r -= weights[i]
+    if (r <= 0) return allowedLanes[i]
+  }
+  return allowedLanes[allowedLanes.length - 1]
 }
 
 function pickWeighted(items) {
@@ -329,7 +347,9 @@ export class ObstacleSystem {
 
     const allowedLanes = isCoin ? this.config.coin.lanes : loadedDef.lanes
     if (!allowedLanes?.length) return
-    const laneIndex = allowedLanes[Math.floor(Math.random() * allowedLanes.length)]
+    const laneIndex = isCoin
+      ? pickWeightedLaneIndex(allowedLanes, this.config.coin.laneWeights)
+      : allowedLanes[Math.floor(Math.random() * allowedLanes.length)]
     const x = this.lanePositions[laneIndex] ?? 0
     const spawnMin = Math.max(this.config.spawnAheadMin, this.config.spawnAheadMax * 0.55)
     const z = playerZ - randomRange(spawnMin, this.config.spawnAheadMax)

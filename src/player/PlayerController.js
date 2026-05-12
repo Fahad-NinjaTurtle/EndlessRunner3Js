@@ -38,6 +38,8 @@ export class PlayerController {
     this.positionY = this.baseHeight;
     this.groundY = 0;
     this.isJumping = false;
+    /** Quick descent from jump: boosted gravity + fall animation until ground */
+    this.fastFallBoost = false;
     this.isRolling = false;
     this.rollTimer = 0;
     this.raycaster = new THREE.Raycaster();
@@ -178,6 +180,8 @@ export class PlayerController {
   stopRunning() {
     this.isActive = false;
     this.currentSpeed = 0;
+    this.fastFallBoost = false;
+    this._restoreLandActionLoop();
     if (!this.isJumping && !this.isRolling) {
       this._setAction("idle", 0.12);
     }
@@ -202,13 +206,19 @@ export class PlayerController {
   jump() {
     if (!this.group || this.isJumping || this.isRolling) return;
     this.isJumping = true;
+    this.fastFallBoost = false;
+    this._restoreLandActionLoop();
     this.groundY = this._getGroundY();
     this.velocityY = this.config.jump.velocity;
     this._setAction("jump");
   }
 
   roll() {
-    if (!this.group || this.isJumping || this.isRolling) return;
+    if (!this.group || this.isRolling) return;
+    if (this.isJumping) {
+      this._startFastFallFromJump();
+      return;
+    }
     this.isRolling = true;
     const rollAction = this.actions.roll;
     this.rollTimer = rollAction
@@ -216,6 +226,37 @@ export class PlayerController {
       : this.config.roll.duration;
     this.currentHeight = this.baseHeight * this.config.roll.heightScale;
     this._setAction("roll");
+  }
+
+  _restoreLandActionLoop() {
+    const land = this.actions.land;
+    if (!land) return;
+    land.setLoop(THREE.LoopOnce, 1);
+    land.clampWhenFinished = true;
+  }
+
+  /** Fast smooth slam: fall anim + high gravity until ground (no position snap) */
+  _startFastFallFromJump() {
+    if (!this.group || !this.isJumping || this.fastFallBoost) return;
+    this.fastFallBoost = true;
+    const boost = this.config.jump.fastFallVelocityBoost ?? -9;
+    const minDown = this.config.jump.fastFallMinDownVelocity ?? -6;
+    this.velocityY = Math.min(this.velocityY + boost, minDown);
+    const land = this.actions.land;
+    if (land) {
+      land.setLoop(THREE.LoopRepeat, Infinity);
+      land.clampWhenFinished = false;
+      this._setAction("land", 0.12);
+    }
+  }
+
+  _finishJumpLanding() {
+    this.fastFallBoost = false;
+    this._restoreLandActionLoop();
+    this.isJumping = false;
+    this.currentHeight = this.baseHeight;
+    this.velocityY = 0;
+    this._setAction("run", 0.1);
   }
 
   update(deltaTime) {
@@ -256,14 +297,14 @@ export class PlayerController {
     const groundY = this._getGroundY();
 
     if (this.isJumping) {
-      this.velocityY += this.config.jump.gravity * deltaTime;
+      const gravMult = this.fastFallBoost
+        ? (this.config.jump.fastFallGravityMultiplier ?? 3)
+        : 1;
+      this.velocityY += this.config.jump.gravity * gravMult * deltaTime;
       this.positionY += this.velocityY * deltaTime;
       if (this.positionY <= groundY) {
         this.positionY = groundY;
-        this.velocityY = 0;
-        this.isJumping = false;
-        this.currentHeight = this.baseHeight;
-        this._setAction("run", 0.08);
+        this._finishJumpLanding();
       }
     } else {
       this.positionY = THREE.MathUtils.lerp(this.positionY, groundY, 0.35);
@@ -326,6 +367,8 @@ export class PlayerController {
   snapToGround() {
     if (!this.group) return;
 
+    this.fastFallBoost = false;
+    this._restoreLandActionLoop();
     const groundY = this._getGroundY();
     this.groundY = groundY;
     this.positionY = groundY;
