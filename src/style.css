@@ -5,6 +5,10 @@
 html,
 body {
   height: 100%;
+  /* Let the game receive swipes on iOS Safari instead of scroll/zoom gestures */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
 }
 
 body {
@@ -12,25 +16,124 @@ body {
   background: #0b0c10;
   overflow: hidden;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: none;
 }
 
 #app {
   width: 100%;
   height: 100%;
+  touch-action: none;
 }
 
 #app canvas {
   display: block;
   width: 100%;
   height: 100%;
+  touch-action: none;
 }
 
 .hud {
   position: fixed;
   top: 14px;
   left: 14px;
+  right: 14px;
   z-index: 9;
   transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.hud__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.hud__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  pointer-events: none;
+  min-width: 0;
+}
+
+.hud__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 132px));
+  gap: 10px;
+  pointer-events: auto;
+  align-self: start;
+  justify-self: end;
+}
+
+.hud__panel.hud__panel--action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hud__panel--action {
+  pointer-events: auto;
+  cursor: pointer;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  min-height: 46px;
+  box-sizing: border-box;
+  transition: background 160ms ease, border-color 160ms ease, opacity 160ms ease;
+}
+
+.hud__panel--action:hover:not(:disabled) {
+  background: rgba(18, 24, 38, 0.88);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.hud__panel--action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.hud__label--action {
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .hud__row {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .hud__stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 10px;
+  }
+
+  .hud__stats .hud__panel {
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .hud__actions {
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    justify-self: stretch;
+    max-width: none;
+  }
+}
+
+.hud__suffix {
+  margin-left: 2px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .hud--hidden {
@@ -62,6 +165,61 @@ body {
   color: #fca5a5;
 }
 
+.hud__value--distance {
+  color: #93c5fd;
+}
+
+.paused-banner {
+  position: fixed;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  padding: 14px 26px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(10, 14, 24, 0.82);
+  backdrop-filter: blur(10px);
+  font-size: clamp(1.05rem, 3.8vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.94);
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  transition: opacity 200ms ease, visibility 200ms ease;
+}
+
+.paused-banner--hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.countdown-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 11;
+  pointer-events: none;
+  background: rgba(6, 10, 18, 0.42);
+  transition: opacity 160ms ease, visibility 160ms ease;
+}
+
+.countdown-overlay--hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.countdown-overlay__number {
+  font-size: clamp(4rem, 22vw, 9rem);
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+  letter-spacing: -0.04em;
+}
+
 .overlay {
   position: fixed;
   inset: 0;
@@ -70,7 +228,62 @@ body {
   padding: 24px;
   background: linear-gradient(180deg, rgba(8, 11, 19, 0.9), rgba(8, 11, 19, 0.82));
   z-index: 10;
+  transition: opacity 220ms ease, visibility 220ms ease, background 280ms ease;
+}
+
+.overlay--tap-mode {
+  background: linear-gradient(
+    180deg,
+    rgba(8, 11, 19, 0.06) 0%,
+    rgba(8, 11, 19, 0.28) 55%,
+    rgba(8, 11, 19, 0.52) 100%
+  );
+  place-items: stretch;
+  padding: 0;
+}
+
+.overlay__panel--hidden {
+  display: none !important;
+}
+
+.tap-to-play-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+  place-items: end center;
+  padding: 0 20px 14vh;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  z-index: 2;
   transition: opacity 220ms ease, visibility 220ms ease;
+}
+
+.tap-to-play-layer--hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.tap-to-play-layer__text {
+  display: inline-block;
+  padding: 14px 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(9, 12, 20, 0.62);
+  backdrop-filter: blur(12px);
+  font-size: clamp(1.05rem, 4vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+
+.tap-to-play-layer:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 4px;
 }
 
 .overlay--hidden {

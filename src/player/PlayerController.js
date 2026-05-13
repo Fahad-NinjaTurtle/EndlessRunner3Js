@@ -40,6 +40,10 @@ export class PlayerController {
     this.isJumping = false;
     /** Quick descent from jump: boosted gravity + fall animation until ground */
     this.fastFallBoost = false;
+    /** Slide pressed mid-air: slam down and roll once grounded */
+    this.pendingRollAfterLanding = false;
+    /** W during slide: seconds left before jump starts (after quick run snap) */
+    this.jumpChainFromRollRemaining = null;
     this.isRolling = false;
     this.rollTimer = 0;
     this.raycaster = new THREE.Raycaster();
@@ -48,6 +52,9 @@ export class PlayerController {
     this.raycastHits = [];
     this.tmpNormalMatrix = new THREE.Matrix3();
     this.tmpFaceNormal = new THREE.Vector3();
+    /** First session: idle preview faces camera; tap rotates to gameplayYaw */
+    this.menuFacingActive = true;
+    this.rotateToGameplayTimer = null;
   }
 
   async load() {
@@ -74,6 +81,11 @@ export class PlayerController {
     this.positionY = this.baseHeight;
     this.group.position.set(0, this.positionY, this.startZ);
 
+    const menuYaw = this.config.menuFacingYaw ?? Math.PI;
+    const playYaw = this.config.gameplayYaw ?? 0;
+    this.group.rotation.y = menuYaw;
+    this.menuFacingActive = Math.abs(menuYaw - playYaw) > 0.001;
+
     if (gltf.animations.length) {
       this.mixer = new THREE.AnimationMixer(gltf.scene);
       this.mixer.addEventListener("finished", (event) =>
@@ -81,6 +93,55 @@ export class PlayerController {
       );
       this._createActions(gltf.animations);
       this._setAction("idle");
+    }
+  }
+
+  needsMenuToGameplayTurn() {
+    return Boolean(this.menuFacingActive);
+  }
+
+  isRotatingToGameplay() {
+    return this.rotateToGameplayTimer != null;
+  }
+
+  rotateToGameplayThen(onComplete) {
+    if (!this.group || !this.menuFacingActive) {
+      if (typeof onComplete === "function") onComplete();
+      return;
+    }
+    if (this.rotateToGameplayTimer) return;
+
+    const targetY = this.config.gameplayYaw ?? 0;
+    const startY = this.group.rotation.y;
+    const duration = Math.max(
+      0.05,
+      this.config.menuToGameplayRotateDuration ?? 0.42,
+    );
+
+    this.rotateToGameplayTimer = {
+      startY,
+      targetY,
+      elapsed: 0,
+      duration,
+      onDone: () => {
+        this.menuFacingActive = false;
+        if (this.group) this.group.rotation.y = targetY;
+        if (typeof onComplete === "function") onComplete();
+      },
+    };
+  }
+
+  _updateRotateToGameplay(deltaTime) {
+    if (!this.rotateToGameplayTimer || !this.group) return;
+    const t = this.rotateToGameplayTimer;
+    t.elapsed += deltaTime;
+    const k = Math.min(1, t.elapsed / t.duration);
+    const s = k * k * (3 - 2 * k);
+    this.group.rotation.y = THREE.MathUtils.lerp(t.startY, t.targetY, s);
+    if (k >= 1) {
+      const done = t.onDone;
+      this.rotateToGameplayTimer = null;
+      done();
     }
   }
 
@@ -130,12 +191,7 @@ export class PlayerController {
   _onActionFinished(event) {
     if (!event || !event.action) return;
     if (event.action === this.actions.roll) {
-      this.isRolling = false;
-      this.currentHeight = this.baseHeight;
-      const groundY = this._getGroundY();
-      this.positionY = groundY;
-      this.group.position.y = this.positionY;
-      this._setAction("run", 0.08);
+      this._endGroundRoll();
       return;
     }
 
@@ -181,6 +237,8 @@ export class PlayerController {
     this.isActive = false;
     this.currentSpeed = 0;
     this.fastFallBoost = false;
+    this.pendingRollAfterLanding = false;
+    this.jumpChainFromRollRemaining = null;
     this._restoreLandActionLoop();
     if (!this.isJumping && !this.isRolling) {
       this._setAction("idle", 0.12);
@@ -204,21 +262,50 @@ export class PlayerController {
   }
 
   jump() {
-    if (!this.group || this.isJumping || this.isRolling) return;
+    if (!this.group || this.isJumping) return;
+    if (this.jumpChainFromRollRemaining != null) return;
+    if (this.isRolling) {
+      this._interruptRollForJump();
+      return;
+    }
+    this.pendingRollAfterLanding = false;
+    this._beginJumpFromGround();
+  }
+
+  _beginJumpFromGround(jumpFade = 0.12) {
     this.isJumping = true;
     this.fastFallBoost = false;
     this._restoreLandActionLoop();
     this.groundY = this._getGroundY();
     this.velocityY = this.config.jump.velocity;
-    this._setAction("jump");
+    this._setAction("jump", jumpFade);
+  }
+
+  /** W while sliding: end roll immediately, brief run, then jump (mirrors snappy jump→S) */
+  _interruptRollForJump() {
+    if (!this.group || !this.isRolling) return;
+    const chain = this.config.roll?.interruptToJumpChain ?? 0.055;
+    this.isRolling = false;
+    this.rollTimer = 0;
+    this.currentHeight = this.baseHeight;
+    const groundY = this._getGroundY();
+    this.positionY = groundY;
+    this.group.position.y = this.positionY;
+    this._setAction("run", chain);
+    this.jumpChainFromRollRemaining = chain;
   }
 
   roll() {
     if (!this.group || this.isRolling) return;
     if (this.isJumping) {
+      this.pendingRollAfterLanding = true;
       this._startFastFallFromJump();
       return;
     }
+    this._beginGroundRoll();
+  }
+
+  _beginGroundRoll() {
     this.isRolling = true;
     const rollAction = this.actions.roll;
     this.rollTimer = rollAction
@@ -226,6 +313,17 @@ export class PlayerController {
       : this.config.roll.duration;
     this.currentHeight = this.baseHeight * this.config.roll.heightScale;
     this._setAction("roll");
+  }
+
+  /** Roll animation finished or timer ended */
+  _endGroundRoll() {
+    if (!this.isRolling) return;
+    this.isRolling = false;
+    this.currentHeight = this.baseHeight;
+    const groundY = this._getGroundY();
+    this.positionY = groundY;
+    this.group.position.y = this.positionY;
+    this._setAction("run", 0.08);
   }
 
   _restoreLandActionLoop() {
@@ -254,14 +352,27 @@ export class PlayerController {
     this.fastFallBoost = false;
     this._restoreLandActionLoop();
     this.isJumping = false;
-    this.currentHeight = this.baseHeight;
     this.velocityY = 0;
+    if (this.pendingRollAfterLanding) {
+      this.pendingRollAfterLanding = false;
+      this._beginGroundRoll();
+      return;
+    }
+    this.currentHeight = this.baseHeight;
     this._setAction("run", 0.1);
   }
 
   update(deltaTime) {
     if (!this.group) return;
+
+    this._updateRotateToGameplay(deltaTime);
+
     if (!this.isActive) {
+      if (!this.isJumping && !this.isRolling) {
+        const groundY = this._getGroundY();
+        this.positionY = groundY;
+        this.group.position.y = groundY;
+      }
       if (this.mixer) this.mixer.update(deltaTime);
       return;
     }
@@ -269,7 +380,22 @@ export class PlayerController {
     this._updateSpeed(deltaTime);
     this._updateLane(deltaTime);
     this._updateVertical(deltaTime);
+    this._updateJumpChainFromRoll(deltaTime);
     if (this.mixer) this.mixer.update(deltaTime);
+  }
+
+  _updateJumpChainFromRoll(deltaTime) {
+    if (this.jumpChainFromRollRemaining == null) return;
+    if (!this.isActive || this.isJumping) {
+      this.jumpChainFromRollRemaining = null;
+      return;
+    }
+    this.jumpChainFromRollRemaining -= deltaTime;
+    if (this.jumpChainFromRollRemaining > 0) return;
+    this.jumpChainFromRollRemaining = null;
+    const jumpFade = this.config.roll?.interruptJumpFade ?? 0.09;
+    this.pendingRollAfterLanding = false;
+    this._beginJumpFromGround(jumpFade);
   }
 
   _updateSpeed(deltaTime) {
@@ -293,6 +419,13 @@ export class PlayerController {
     );
   }
 
+  /** Same vertical settle as when running on flat ground — keeps menu/idle Y aligned with gameplay. */
+  _syncGroundHeightWhileGrounded() {
+    const groundY = this._getGroundY();
+    this.positionY = THREE.MathUtils.lerp(this.positionY, groundY, 0.35);
+    if (Math.abs(this.positionY - groundY) < 0.01) this.positionY = groundY;
+  }
+
   _updateVertical(deltaTime) {
     const groundY = this._getGroundY();
 
@@ -307,8 +440,7 @@ export class PlayerController {
         this._finishJumpLanding();
       }
     } else {
-      this.positionY = THREE.MathUtils.lerp(this.positionY, groundY, 0.35);
-      if (Math.abs(this.positionY - groundY) < 0.01) this.positionY = groundY;
+      this._syncGroundHeightWhileGrounded();
     }
 
     if (this.isRolling) {
@@ -321,10 +453,7 @@ export class PlayerController {
         this._setAction("run", 0.08);
       }
       if (this.rollTimer <= 0) {
-        this.isRolling = false;
-        this.currentHeight = this.baseHeight;
-        this.positionY = groundY;
-        this._setAction("run", 0.08);
+        this._endGroundRoll();
       }
     }
 
@@ -368,6 +497,8 @@ export class PlayerController {
     if (!this.group) return;
 
     this.fastFallBoost = false;
+    this.pendingRollAfterLanding = false;
+    this.jumpChainFromRollRemaining = null;
     this._restoreLandActionLoop();
     const groundY = this._getGroundY();
     this.groundY = groundY;

@@ -5,7 +5,7 @@ export const CONTROLS_CONFIG = {
     jump: ['ArrowUp', 'w', 'W', ' '],
     roll: ['ArrowDown', 's', 'S'],
   },
-  swipeThreshold: 35,
-  swipeVerticalThreshold: 35,
+  swipeThreshold: 28,
+  swipeVerticalThreshold: 28,
   touchEnabled: true,
 }

@@ -6,6 +6,8 @@ const DEFAULT_CONFIG = {
   spawnAheadMax: 82,
   despawnBehindOffset: 8,
   colliderPadding: 0.2,
+  /** Extra space between car centers on the same lane (world units) — avoids nose-to-tail overlap */
+  sameLaneCarGap: 5.5,
   obstacleSpawnInterval: { min: 0.38, max: 0.82 },
   coinSpawnInterval: { min: 0.2, max: 0.45 },
   obstacleFadeInDuration: 0.22,
@@ -29,7 +31,7 @@ const DEFAULT_CONFIG = {
       yOffset: 0,
       movingTowardPlayerSpeed: 8.5,
       weight: 2.85,
-      colliderScale: { x: 0.72, y: 0.52, z: 0.74 },
+      colliderScale: { x: 0.6, y: 0.5, z: 0.6 },
     },
     {
       id: 'tree',
@@ -39,17 +41,25 @@ const DEFAULT_CONFIG = {
       yOffset: 0,
       movingTowardPlayerSpeed: 0,
       weight: 0.9,
-      colliderScale: { x: 0.38, y: 0.82, z: 0.52 },
+      colliderScale: { x: 0.2, y: 0.82, z: 0.1 },
     },
     {
       id: 'vlc',
       url: 'models/Obstacles/Vlc.glb',
       lanes: [0, 1, 2],
-      scale: 1,
+      /** Visual scale — collision half-extents and beam offset scale with this */
+      scale: 1.12,
       yOffset: 0,
       movingTowardPlayerSpeed: 0,
       weight: 1,
-      colliderScale: { x: 0.56, y: 0.7, z: 0.66 },
+      /**
+       * One mesh-sized AABB would block the underpass. Use a thin "beam" slab near the top
+       * (like Unity box colliders on the board only, not a single mesh collider on the whole GLB).
+       */
+      colliderKind: 'beam',
+      beamCenterYRatio: 0.84,
+      beamHalfHeightRatio: 0.085,
+      colliderScale: { x: 0.58, y: 0.7, z: 0.68 },
     },
   ],
   coin: {
@@ -207,16 +217,32 @@ export class ObstacleSystem {
     root.updateMatrixWorld(true)
     const measured = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3())
     const colliderScale = def.colliderScale ?? {}
-    const colliderHalfExtents = new THREE.Vector3(
-      Math.max(0.15, measured.x * (colliderScale.x ?? 0.5)),
-      Math.max(0.15, measured.y * (colliderScale.y ?? 0.5)),
-      Math.max(0.15, measured.z * (colliderScale.z ?? 0.5)),
-    )
+    const colliderCenterOffset = new THREE.Vector3(0, 0, 0)
+    let colliderHalfExtents
+    if (def.colliderKind === 'beam') {
+      const halfY = Math.max(
+        0.06,
+        measured.y * (def.beamHalfHeightRatio ?? 0.08),
+      )
+      colliderHalfExtents = new THREE.Vector3(
+        Math.max(0.15, measured.x * (colliderScale.x ?? 0.5)),
+        halfY,
+        Math.max(0.15, measured.z * (colliderScale.z ?? 0.5)),
+      )
+      colliderCenterOffset.y = measured.y * (def.beamCenterYRatio ?? 0.85)
+    } else {
+      colliderHalfExtents = new THREE.Vector3(
+        Math.max(0.15, measured.x * (colliderScale.x ?? 0.5)),
+        Math.max(0.15, measured.y * (colliderScale.y ?? 0.5)),
+        Math.max(0.15, measured.z * (colliderScale.z ?? 0.5)),
+      )
+    }
     return {
       ...def,
       prototype: root,
       baseRadius: Math.max(measured.x, measured.y, measured.z) * 0.5,
       colliderHalfExtents,
+      colliderCenterOffset,
     }
   }
 
@@ -340,6 +366,54 @@ export class ObstacleSystem {
     })
   }
 
+  /** Cars only: ensure spawn Z is far enough from other cars in that lane (axis = track depth). */
+  _pickCarLaneAndZ(playerZ, loadedDef) {
+    const spawnScale = loadedDef.scale ?? 1
+    const hzNew = Math.max(
+      0.15,
+      (loadedDef.colliderHalfExtents?.z ?? loadedDef.baseRadius * 0.5) * spawnScale,
+    )
+    const gap = this.config.sameLaneCarGap ?? 5.5
+    const spawnMin = Math.max(this.config.spawnAheadMin, this.config.spawnAheadMax * 0.55)
+    const zMin = playerZ - this.config.spawnAheadMax
+    const zMax = playerZ - spawnMin
+    const lanes = [...(loadedDef.lanes ?? [])].sort(() => Math.random() - 0.5)
+
+    for (const laneIndex of lanes) {
+      let z = playerZ - randomRange(spawnMin, this.config.spawnAheadMax)
+      for (let pass = 0; pass < 36; pass++) {
+        let adjusted = false
+        for (const obs of this.activeObstacles) {
+          if (obs.groupId !== 'car' || obs.laneIndex !== laneIndex) continue
+          const hzObs = obs.halfExtents?.z ?? obs.radius * 0.65
+          const need = hzNew + hzObs + gap
+          if (Math.abs(z - obs.model.position.z) >= need) continue
+          const zFurther = obs.model.position.z - need
+          const zCloser = obs.model.position.z + need
+          let nextZ = zFurther
+          if (zFurther < zMin || zFurther > zMax) {
+            if (zCloser >= zMin && zCloser <= zMax) nextZ = zCloser
+            else {
+              nextZ = Number.NaN
+            }
+          }
+          if (!Number.isFinite(nextZ)) {
+            z = Number.NaN
+            break
+          }
+          z = nextZ
+          adjusted = true
+        }
+        if (!Number.isFinite(z)) break
+        if (!adjusted) {
+          if (z >= zMin && z <= zMax) return { laneIndex, z }
+          break
+        }
+      }
+    }
+    return null
+  }
+
   _spawnFromDefinition(def, isCoin, playerZ) {
     if (!this.lanePositions.length) return
     const loadedDef = this.modelDefs.get(def.id)
@@ -347,12 +421,25 @@ export class ObstacleSystem {
 
     const allowedLanes = isCoin ? this.config.coin.lanes : loadedDef.lanes
     if (!allowedLanes?.length) return
-    const laneIndex = isCoin
-      ? pickWeightedLaneIndex(allowedLanes, this.config.coin.laneWeights)
-      : allowedLanes[Math.floor(Math.random() * allowedLanes.length)]
+
+    let laneIndex
+    let z
+    if (isCoin) {
+      laneIndex = pickWeightedLaneIndex(allowedLanes, this.config.coin.laneWeights)
+      const spawnMin = Math.max(this.config.spawnAheadMin, this.config.spawnAheadMax * 0.55)
+      z = playerZ - randomRange(spawnMin, this.config.spawnAheadMax)
+    } else if (loadedDef.obstacleGroupId === 'car') {
+      const picked = this._pickCarLaneAndZ(playerZ, loadedDef)
+      if (!picked) return
+      laneIndex = picked.laneIndex
+      z = picked.z
+    } else {
+      laneIndex = allowedLanes[Math.floor(Math.random() * allowedLanes.length)]
+      const spawnMin = Math.max(this.config.spawnAheadMin, this.config.spawnAheadMax * 0.55)
+      z = playerZ - randomRange(spawnMin, this.config.spawnAheadMax)
+    }
+
     const x = this.lanePositions[laneIndex] ?? 0
-    const spawnMin = Math.max(this.config.spawnAheadMin, this.config.spawnAheadMax * 0.55)
-    const z = playerZ - randomRange(spawnMin, this.config.spawnAheadMax)
     const y = this._sampleGroundY(x, z) + (loadedDef.yOffset ?? 0)
     const model = this._acquire(loadedDef)
     model.position.set(x, y, z)
@@ -366,13 +453,20 @@ export class ObstacleSystem {
     const radius =
       Math.max(this.box.getSize(this.tmpSize).length() * 0.3, loadedDef.baseRadius * 0.4) +
       this.config.colliderPadding
+    const spawnScale = loadedDef.scale ?? 1
+    const halfExtents = loadedDef.colliderHalfExtents?.clone()
+    if (halfExtents) halfExtents.multiplyScalar(spawnScale)
+    const collisionOffset = loadedDef.colliderCenterOffset
+      ? loadedDef.colliderCenterOffset.clone().multiplyScalar(spawnScale)
+      : new THREE.Vector3()
     const item = {
       typeId: loadedDef.id,
       groupId: loadedDef.obstacleGroupId ?? loadedDef.id,
       laneIndex,
       model,
       radius,
-      halfExtents: loadedDef.colliderHalfExtents?.clone(),
+      halfExtents,
+      collisionOffset,
       baseMoveSpeed: loadedDef.movingTowardPlayerSpeed ?? 0,
       fadeDuration: isCoin ? this.config.coinFadeInDuration : this.config.obstacleFadeInDuration,
       fadeElapsed: 0,
@@ -458,9 +552,13 @@ export class ObstacleSystem {
     let collected = 0
     const pickupPositions = []
     for (const obstacle of this.activeObstacles) {
-      const dx = Math.abs(obstacle.model.position.x - playerPosition.x)
-      const dy = Math.abs(obstacle.model.position.y - playerPosition.y)
-      const dz = Math.abs(obstacle.model.position.z - playerPosition.z)
+      const off = obstacle.collisionOffset
+      const ox = obstacle.model.position.x + (off?.x ?? 0)
+      const oy = obstacle.model.position.y + (off?.y ?? 0)
+      const oz = obstacle.model.position.z + (off?.z ?? 0)
+      const dx = Math.abs(ox - playerPosition.x)
+      const dy = Math.abs(oy - playerPosition.y)
+      const dz = Math.abs(oz - playerPosition.z)
       const obstacleHalf = obstacle.halfExtents
       const overlapsX = dx <= playerHalfExtents.x + (obstacleHalf?.x ?? obstacle.radius)
       const overlapsY = dy <= playerHalfExtents.y + (obstacleHalf?.y ?? obstacle.radius)

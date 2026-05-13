@@ -77,18 +77,26 @@ export class Game {
     this.road = new RoadManager(this.scene, ROAD_CONFIG, this.loadingManager)
     this.obstacles = new ObstacleSystem(this.scene, this.loadingManager)
     this.controls = new PlayerControls(CONTROLS_CONFIG, {
-      left: () => this.player.moveLeft(),
-      right: () => this.player.moveRight(),
-      jump: () => this.player.jump(),
-      roll: () => this.player.roll(),
+      left: () => this._playerAction(() => this.player.moveLeft()),
+      right: () => this._playerAction(() => this.player.moveRight()),
+      jump: () => this._playerAction(() => this.player.jump()),
+      roll: () => this._playerAction(() => this.player.roll()),
     })
     this.isRunning = false
+    this.isPaused = false
+    this.resumeCountdownElapsed = null
+    this.lastResumeCountdownShown = null
+    this.runDistance = 0
     this.isLoopStarted = false
     this.coinCount = 0
     this.onCoinChange = null
     this.onGameOver = null
     this.onCoinPickup = null
     this.onHit = null
+    this.onDistanceChange = null
+    this.onResumeCountdown = null
+    this.onPauseStateChange = null
+    this.onMuteChange = null
     this.deathParticleSystem = null
     this.deathParticleLife = null
     this.deathParticleMaxLife = 1.1
@@ -103,6 +111,67 @@ export class Game {
     this.audio = new AudioManager(AUDIO_CONFIG)
 
     window.addEventListener('resize', () => this.resize())
+  }
+
+  _playerAction(fn) {
+    if (!this.isRunning || this.isPaused || this.resumeCountdownElapsed !== null) return
+    fn()
+  }
+
+  getSimulationActive() {
+    return this.isRunning && !this.isPaused && this.resumeCountdownElapsed === null
+  }
+
+  getPauseButtonState() {
+    if (!this.isRunning) {
+      return { enabled: false, label: 'Pause' }
+    }
+    if (this.resumeCountdownElapsed !== null) {
+      return { enabled: false, label: '…' }
+    }
+    if (this.isPaused) {
+      return { enabled: true, label: 'Resume' }
+    }
+    return { enabled: true, label: 'Pause' }
+  }
+
+  isMuted() {
+    return this.audio.isMuted()
+  }
+
+  toggleMute() {
+    const next = !this.audio.isMuted()
+    this.audio.setMuted(next)
+    if (
+      !next &&
+      this.isRunning &&
+      !this.isPaused &&
+      this.resumeCountdownElapsed === null
+    ) {
+      this.audio.resumeLoopingTracksIfRunning(true)
+    }
+    if (typeof this.onMuteChange === 'function') this.onMuteChange(next)
+  }
+
+  togglePause() {
+    if (!this.isRunning) return
+    if (this.resumeCountdownElapsed !== null) return
+
+    if (!this.isPaused) {
+      this.isPaused = true
+      this.audio.pauseLoopingTracks()
+      if (typeof this.onPauseStateChange === 'function') {
+        this.onPauseStateChange({ paused: true, countdown: false })
+      }
+      return
+    }
+
+    this.resumeCountdownElapsed = 0
+    this.lastResumeCountdownShown = 3
+    if (typeof this.onResumeCountdown === 'function') this.onResumeCountdown(3)
+    if (typeof this.onPauseStateChange === 'function') {
+      this.onPauseStateChange({ paused: true, countdown: true })
+    }
   }
 
   async load(onProgress) {
@@ -173,6 +242,21 @@ export class Game {
 
   startGame() {
     if (this.isRunning) return
+    if (typeof this.player.isRotatingToGameplay === 'function' && this.player.isRotatingToGameplay()) return
+
+    if (
+      typeof this.player.needsMenuToGameplayTurn === 'function' &&
+      this.player.needsMenuToGameplayTurn()
+    ) {
+      this.player.rotateToGameplayThen(() => this.applyGameStart())
+      return
+    }
+
+    this.applyGameStart()
+  }
+
+  applyGameStart() {
+    if (this.isRunning) return
     this.clearDeathParticles()
     this.clearCoinSparkles()
     this.pendingGameOver = null
@@ -180,8 +264,17 @@ export class Game {
     this.cameraShakeDuration = 0
     this.cameraShakeMagnitude = 0
     this.coinCount = 0
-    if (typeof this.onCoinChange === 'function') this.onCoinChange(this.coinCount)
+    this.runDistance = 0
+    this.isPaused = false
+    this.resumeCountdownElapsed = null
+    this.lastResumeCountdownShown = null
     this.isRunning = true
+    if (typeof this.onCoinChange === 'function') this.onCoinChange(this.coinCount)
+    if (typeof this.onDistanceChange === 'function') this.onDistanceChange(this.runDistance)
+    if (typeof this.onResumeCountdown === 'function') this.onResumeCountdown(null)
+    if (typeof this.onPauseStateChange === 'function') {
+      this.onPauseStateChange({ paused: false, countdown: false })
+    }
     this.audio.unlockFromUserGesture()
     this.audio.playBgm()
     this.audio.playFootsteps()
@@ -191,20 +284,39 @@ export class Game {
     this.obstacles.setLanePositions(this.road.getLanePositions())
     this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
     this.obstacles.start()
-    this.controls.enable()
+    this.controls.enable(this.renderer.domElement)
     this.clock.getDelta()
   }
 
-  setUIHandlers({ onCoinChange, onGameOver, onCoinPickup, onHit } = {}) {
+  setUIHandlers({
+    onCoinChange,
+    onGameOver,
+    onCoinPickup,
+    onHit,
+    onDistanceChange,
+    onResumeCountdown,
+    onPauseStateChange,
+    onMuteChange,
+  } = {}) {
     this.onCoinChange = typeof onCoinChange === 'function' ? onCoinChange : null
     this.onGameOver = typeof onGameOver === 'function' ? onGameOver : null
     this.onCoinPickup = typeof onCoinPickup === 'function' ? onCoinPickup : null
     this.onHit = typeof onHit === 'function' ? onHit : null
+    this.onDistanceChange = typeof onDistanceChange === 'function' ? onDistanceChange : null
+    this.onResumeCountdown = typeof onResumeCountdown === 'function' ? onResumeCountdown : null
+    this.onPauseStateChange = typeof onPauseStateChange === 'function' ? onPauseStateChange : null
+    this.onMuteChange = typeof onMuteChange === 'function' ? onMuteChange : null
   }
 
   stopGame() {
     if (!this.isRunning) return
     this.isRunning = false
+    this.isPaused = false
+    this.resumeCountdownElapsed = null
+    if (typeof this.onResumeCountdown === 'function') this.onResumeCountdown(null)
+    if (typeof this.onPauseStateChange === 'function') {
+      this.onPauseStateChange({ paused: false, countdown: false })
+    }
     this.player.stopRunning()
     this.obstacles.stop()
     this.audio.stopFootsteps()
@@ -423,12 +535,50 @@ export class Game {
     const dt = Math.min(this.timeAccumulator, 0.05)
     this.timeAccumulator = 0
 
-    const speed = this.isRunning ? this.player.getCurrentSpeed() : 0
-    this.road.update(dt, speed, this.camera.position.z)
-    this.player.update(dt)
-    this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
-    const collisionState = this.obstacles.update(dt, speed, this.player.getCollisionData())
-    if (collisionState.collected > 0) {
+    if (this.resumeCountdownElapsed !== null) {
+      this.resumeCountdownElapsed += dt
+      const idx = Math.floor(this.resumeCountdownElapsed)
+      if (idx >= 3) {
+        this.resumeCountdownElapsed = null
+        this.lastResumeCountdownShown = null
+        this.isPaused = false
+        if (typeof this.onResumeCountdown === 'function') this.onResumeCountdown(null)
+        if (typeof this.onPauseStateChange === 'function') {
+          this.onPauseStateChange({ paused: false, countdown: false })
+        }
+        this.audio.resumeLoopingTracksIfRunning(this.isRunning)
+      } else {
+        const displayNum = Math.max(1, 3 - idx)
+        if (displayNum !== this.lastResumeCountdownShown) {
+          this.lastResumeCountdownShown = displayNum
+          if (typeof this.onResumeCountdown === 'function') this.onResumeCountdown(displayNum)
+        }
+      }
+    }
+
+    const simulationActive = this.getSimulationActive()
+
+    let speed = 0
+    let collisionState = { hit: false, collected: 0, pickupPositions: [] }
+
+    if (simulationActive) {
+      speed = this.player.getCurrentSpeed()
+      this.road.update(dt, speed, this.camera.position.z)
+      this.player.update(dt)
+      this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
+      collisionState = this.obstacles.update(dt, speed, this.player.getCollisionData())
+      this.runDistance += speed * dt
+      if (typeof this.onDistanceChange === 'function') this.onDistanceChange(this.runDistance)
+    } else if (!this.isRunning) {
+      this.road.update(dt, 0, this.camera.position.z)
+      this.player.update(dt)
+      this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
+      collisionState = this.obstacles.update(dt, 0, this.player.getCollisionData())
+    } else {
+      this.road.update(dt, 0, this.camera.position.z)
+    }
+
+    if (collisionState.collected > 0 && simulationActive) {
       this.coinCount += collisionState.collected
       if (typeof this.onCoinChange === 'function') this.onCoinChange(this.coinCount)
       for (const pickupPos of collisionState.pickupPositions ?? []) {
@@ -438,7 +588,12 @@ export class Game {
       if (typeof this.onCoinPickup === 'function') this.onCoinPickup({ count: collisionState.collected })
     }
     if (collisionState.hit && this.isRunning) {
-      this.pendingGameOver = { coins: this.coinCount, speed: this.player.getCurrentSpeed(), delay: this.gameOverDelay }
+      this.pendingGameOver = {
+        coins: this.coinCount,
+        distance: this.runDistance,
+        speed: this.player.getCurrentSpeed(),
+        delay: this.gameOverDelay,
+      }
       this.createDeathBurst(this.player.getPosition())
       this.player.setVisible(false)
       this.triggerCameraShake()
@@ -451,7 +606,9 @@ export class Game {
     if (this.skyDome) {
       this.skyDome.position.copy(this.camera.position)
     }
-    if (this.skyline && ROAD_CONFIG.skyline?.followCamera) {
+
+    const updateCamera = simulationActive || !this.isRunning
+    if (this.skyline && ROAD_CONFIG.skyline?.followCamera && updateCamera) {
       const followXFactor = ROAD_CONFIG.skyline.followXFactor ?? 0.35
       const followZFactor = ROAD_CONFIG.skyline.followZFactor ?? 0.18
       this.skyline.position.set(
@@ -460,30 +617,40 @@ export class Game {
         this.camera.position.z * followZFactor + (ROAD_CONFIG.skyline.zOffset ?? 0),
       )
     }
-    const shakeOffset = this.getCameraShakeOffset(dt)
-    // Follow player on X (smooth) and look at the same X — stays behind the runner without the old 0.35× skew “tilt”
-    const followX = this.cameraPortrait
-      ? (ROAD_CONFIG.cameraFollowXLerpPortrait ?? 0.26)
-      : (ROAD_CONFIG.cameraFollowXLerpLandscape ?? 0.14)
-    this.camera.position.x =
-      THREE.MathUtils.lerp(this.camera.position.x, playerPosition.x, followX) + shakeOffset.x
-    const portraitLift = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitExtraHeight ?? 0) : 0
-    const portraitZ = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitExtraZ ?? 0) : 0
-    this.camera.position.y = this.cameraBaseY + portraitLift + shakeOffset.y
-    this.camera.position.z = this.cameraBaseZ + portraitZ + shakeOffset.z
-    const baseLookAhead = Math.min(2.0, this.road.getSegmentLength() * 0.15)
-    const portraitLookAhead = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitLookAheadExtra ?? 0) : 0
-    const lookZ = playerPosition.z - baseLookAhead - portraitLookAhead
-    const lookYOffset = this.cameraPortrait
-      ? (ROAD_CONFIG.cameraPortraitLookAtYOffset ?? ROAD_CONFIG.cameraLookAtYOffset ?? 0.35)
-      : (ROAD_CONFIG.cameraLookAtYOffset ?? 0.35)
-    this.camera.lookAt(playerPosition.x, playerPosition.y + lookYOffset, lookZ)
-    this.updateDeathParticles(dt)
-    this.updateCoinSparkles(dt)
-    if (this.pendingGameOver) {
+
+    const shakeOffset = updateCamera ? this.getCameraShakeOffset(dt) : { x: 0, y: 0, z: 0 }
+    if (updateCamera) {
+      const followX = this.cameraPortrait
+        ? (ROAD_CONFIG.cameraFollowXLerpPortrait ?? 0.26)
+        : (ROAD_CONFIG.cameraFollowXLerpLandscape ?? 0.14)
+      this.camera.position.x =
+        THREE.MathUtils.lerp(this.camera.position.x, playerPosition.x, followX) + shakeOffset.x
+      const portraitLift = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitExtraHeight ?? 0) : 0
+      const portraitZ = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitExtraZ ?? 0) : 0
+      this.camera.position.y = this.cameraBaseY + portraitLift + shakeOffset.y
+      this.camera.position.z = this.cameraBaseZ + portraitZ + shakeOffset.z
+      const baseLookAhead = Math.min(2.0, this.road.getSegmentLength() * 0.15)
+      const portraitLookAhead = this.cameraPortrait ? (ROAD_CONFIG.cameraPortraitLookAheadExtra ?? 0) : 0
+      const lookZ = playerPosition.z - baseLookAhead - portraitLookAhead
+      const lookYOffset = this.cameraPortrait
+        ? (ROAD_CONFIG.cameraPortraitLookAtYOffset ?? ROAD_CONFIG.cameraLookAtYOffset ?? 0.35)
+        : (ROAD_CONFIG.cameraLookAtYOffset ?? 0.35)
+      this.camera.lookAt(playerPosition.x, playerPosition.y + lookYOffset, lookZ)
+    }
+
+    if (simulationActive || !this.isRunning) {
+      this.updateDeathParticles(dt)
+      this.updateCoinSparkles(dt)
+    }
+
+    if (this.pendingGameOver && (!this.isRunning || !this.isPaused)) {
       this.pendingGameOver.delay -= dt * 1000
       if (this.pendingGameOver.delay <= 0) {
-        const payload = { coins: this.pendingGameOver.coins, speed: this.pendingGameOver.speed }
+        const payload = {
+          coins: this.pendingGameOver.coins,
+          distance: this.pendingGameOver.distance,
+          speed: this.pendingGameOver.speed,
+        }
         this.pendingGameOver = null
         if (typeof this.onGameOver === 'function') this.onGameOver(payload)
       }

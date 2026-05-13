@@ -4,6 +4,12 @@ export const PLAYER_CONFIG = {
   defaultLane: 1,
   modelScale: 0.65,
   laneLerpSpeed: 0.14,
+  /** Y rotation (rad) while on tap-to-play / idle preview — faces the camera */
+  menuFacingYaw: Math.PI,
+  /** Y rotation (rad) during the run — faces down the track */
+  gameplayYaw: 0,
+  /** Seconds to rotate from menu facing to gameplay when starting */
+  menuToGameplayRotateDuration: 0.42,
   speed: {
     initial: 15,
     max: 50,
@@ -25,6 +31,10 @@ export const PLAYER_CONFIG = {
     duration: 0.8,
     heightScale: 0.45,
     blendAhead: 0.12,
+    /** W during slide: snap to run this long, then jump — keeps parity with fast jump→slide */
+    interruptToJumpChain: 0.055,
+    /** Jump crossfade after that snap (snappy takeoff) */
+    interruptJumpFade: 0.09,
   },
   collision: {
     halfHeight: 0.55,

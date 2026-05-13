@@ -3,34 +3,68 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover"
+    />
     <title>Endless Runner</title>
   </head>
   <body>
     <div id="app"></div>
     <div id="hud" class="hud hud--hidden" aria-live="polite">
-      <div class="hud__panel">
-        <span class="hud__label">Carrots</span>
-        <strong id="coin-count" class="hud__value">0</strong>
+      <div class="hud__row">
+        <div class="hud__stats">
+          <div class="hud__panel">
+            <span class="hud__label">Carrots</span>
+            <strong id="coin-count" class="hud__value">0</strong>
+          </div>
+          <div class="hud__panel">
+            <span class="hud__label">Distance</span>
+            <strong id="distance-score" class="hud__value hud__value--distance">0</strong>
+            <span class="hud__suffix">m</span>
+          </div>
+        </div>
+        <div class="hud__actions">
+          <button id="pause-toggle-button" class="hud__panel hud__panel--action" type="button" aria-label="Pause game">
+            <span class="hud__label hud__label--action" id="pause-toggle-label">Pause</span>
+          </button>
+          <button id="mute-toggle-button" class="hud__panel hud__panel--action" type="button" aria-label="Mute audio">
+            <span class="hud__label hud__label--action" id="mute-toggle-label">Mute</span>
+          </button>
+        </div>
       </div>
     </div>
+    <div id="paused-banner" class="paused-banner paused-banner--hidden" role="status" aria-live="polite">
+      Game paused
+    </div>
+    <div id="resume-countdown-overlay" class="countdown-overlay countdown-overlay--hidden" aria-hidden="true">
+      <span id="resume-countdown-text" class="countdown-overlay__number">3</span>
+    </div>
     <div id="loading-overlay" class="overlay">
-      <div class="overlay__panel">
+      <div id="loading-assets-panel" class="overlay__panel overlay__panel--loading">
         <p class="overlay__eyebrow">Endless Runner</p>
         <h1 class="overlay__title">Loading assets</h1>
         <div class="overlay__progress-track" aria-hidden="true">
           <div id="loading-progress-bar" class="overlay__progress-bar"></div>
         </div>
         <p id="loading-progress-text" class="overlay__progress-text">0%</p>
-        <button id="start-game-button" class="overlay__button" type="button" hidden>
-          Start Game
-        </button>
       </div>
+      <button
+        id="tap-to-play-layer"
+        type="button"
+        class="tap-to-play-layer tap-to-play-layer--hidden"
+        aria-label="Tap to play"
+      >
+        <span class="tap-to-play-layer__text">Tap to play</span>
+      </button>
     </div>
     <div id="game-over-overlay" class="overlay overlay--hidden">
       <div class="overlay__panel">
         <p class="overlay__eyebrow">Run Ended</p>
         <h2 class="overlay__title">Game Over</h2>
+        <p class="overlay__progress-text">
+          Distance run: <strong id="final-distance-score">0</strong> m
+        </p>
         <p class="overlay__progress-text">Carrots collected: <strong id="final-coin-count">0</strong></p>
         <button id="restart-game-button" class="overlay__button" type="button">
           Restart Game
