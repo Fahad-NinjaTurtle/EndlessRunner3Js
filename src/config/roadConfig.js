@@ -8,13 +8,9 @@ export const ROAD_CONFIG = {
       url: 'models/Chunk 2.glb',
       offsetX: 0.7,
     },
-    // {
-    //   url: 'models/Chunk 3.glb',
-    //   offsetX: 0,
-    // },
     {
       url: 'models/Chunk 4.glb',
-      offsetX: 2.75,
+      offsetX: 2.8,
     },
     {
       url: 'models/Chunk 5.glb',

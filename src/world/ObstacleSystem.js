@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { isMobileDevice, loadGltfWithTimeout } from '../utils/assetLoading.js'
 
 const DEFAULT_CONFIG = {
   spawnAheadMin: 40,
@@ -168,7 +169,15 @@ export class ObstacleSystem {
   async load() {
     this.spawnableObstacleDefs = this._expandObstacleDefinitions(this.config.obstacleTypes)
     const defs = [...this.spawnableObstacleDefs, this.config.coin]
-    const loaded = await Promise.all(defs.map((def) => this._loadDefinition(def)))
+    const sequential = isMobileDevice()
+    const loaded = []
+    if (sequential) {
+      for (const def of defs) {
+        loaded.push(await this._loadDefinition(def))
+      }
+    } else {
+      loaded.push(...(await Promise.all(defs.map((def) => this._loadDefinition(def)))))
+    }
     for (const def of loaded) {
       this.modelDefs.set(def.id, def)
       this.pools.set(def.id, [])
@@ -200,9 +209,8 @@ export class ObstacleSystem {
   }
 
   _loadModel(url) {
-    return new Promise((resolve, reject) => {
-      this.loader.load(url, resolve, undefined, reject)
-    })
+    const timeoutMs = isMobileDevice() ? 90000 : 45000
+    return loadGltfWithTimeout(this.loader, url, timeoutMs)
   }
 
   async _loadDefinition(def) {

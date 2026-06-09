@@ -10,6 +10,12 @@ export const PLAYER_CONFIG = {
   gameplayYaw: 0,
   /** Seconds to rotate from menu facing to gameplay when starting */
   menuToGameplayRotateDuration: 0.42,
+  /** When not running (tap-to-play / idle preview): extra Y on top of ground (negative = lower stance) */
+  idle: {
+    standingYOffset: -0.5,
+    /** Extra X added to the lane centre while idle (positive = right) */
+    standingXOffset: 0.03,
+  },
   speed: {
     initial: 15,
     max: 50,

@@ -152,5 +152,8 @@ game
   })
   .catch((error) => {
     console.error('Failed to start game:', error)
-    progressText.textContent = 'Failed to load assets'
+    progressText.textContent =
+      error?.message?.includes('Timed out')
+        ? 'Loading timed out — check connection and retry'
+        : 'Failed to load assets'
   })

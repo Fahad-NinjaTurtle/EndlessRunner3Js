@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { isMobileDevice, loadGltfWithTimeout } from '../utils/assetLoading.js'
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -42,7 +43,19 @@ export class RoadManager {
       : this.config.modelUrls?.length
         ? this.config.modelUrls.map((url) => ({ url }))
         : [{ url: this.config.modelUrl }]
-    const gltfs = await Promise.all(chunkConfigs.map((chunk) => this._loadModel(chunk.url)))
+    const timeoutMs = isMobileDevice() ? 90000 : 45000
+    const sequential = isMobileDevice()
+    const gltfs = []
+    if (sequential) {
+      for (const chunk of chunkConfigs) {
+        gltfs.push(await loadGltfWithTimeout(this.loader, chunk.url, timeoutMs))
+      }
+    } else {
+      const loaded = await Promise.all(
+        chunkConfigs.map((chunk) => loadGltfWithTimeout(this.loader, chunk.url, timeoutMs)),
+      )
+      gltfs.push(...loaded)
+    }
     this.chunkDefinitions = gltfs.map((gltf, index) => this._preparePrototype(gltf.scene, index, chunkConfigs[index]))
     this._initializePools()
     this._createInitialSegments()
@@ -59,9 +72,8 @@ export class RoadManager {
   }
 
   async _loadModel(url) {
-    return new Promise((resolve, reject) => {
-      this.loader.load(url, resolve, undefined, reject)
-    })
+    const timeoutMs = isMobileDevice() ? 90000 : 45000
+    return loadGltfWithTimeout(this.loader, url, timeoutMs)
   }
 
   _preparePrototype(root, index, chunkConfig = {}) {

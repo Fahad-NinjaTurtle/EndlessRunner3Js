@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PLAYER_CONFIG } from "../config/playerConfig.js";
+import { isMobileDevice, loadGltfWithTimeout } from "../utils/assetLoading.js";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -146,9 +147,8 @@ export class PlayerController {
   }
 
   async _loadModel(url) {
-    return new Promise((resolve, reject) => {
-      this.loader.load(url, resolve, undefined, reject);
-    });
+    const timeoutMs = isMobileDevice() ? 90000 : 45000;
+    return loadGltfWithTimeout(this.loader, url, timeoutMs);
   }
 
   _createActions(animations) {
@@ -371,7 +371,13 @@ export class PlayerController {
       if (!this.isJumping && !this.isRolling) {
         const groundY = this._getGroundY();
         this.positionY = groundY;
-        this.group.position.y = groundY;
+        const idleDy = this.config.idle?.standingYOffset ?? 0;
+        const idleDx = this.config.idle?.standingXOffset ?? 0;
+        this.group.position.y = groundY + idleDy;
+        if (this.lanePositions.length) {
+          const laneX = this.lanePositions[this.targetLane] ?? 0;
+          this.group.position.x = laneX + idleDx;
+        }
       }
       if (this.mixer) this.mixer.update(deltaTime);
       return;
@@ -411,14 +417,13 @@ export class PlayerController {
   _updateLane(deltaTime) {
     if (!this.lanePositions.length) return;
     const targetX = this.lanePositions[this.targetLane];
-    const currentX = this.group.position.x;
+    const currentX = this.group.position.x +0.03;
     this.group.position.x = THREE.MathUtils.lerp(
       currentX,
       targetX,
       this.config.laneLerpSpeed,
     );
   }
-
   /** Same vertical settle as when running on flat ground — keeps menu/idle Y aligned with gameplay. */
   _syncGroundHeightWhileGrounded() {
     const groundY = this._getGroundY();

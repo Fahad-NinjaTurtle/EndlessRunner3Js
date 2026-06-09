@@ -12,6 +12,7 @@ import { RoadManager } from '../road/RoadManager.js'
 import { PlayerControls } from '../input/PlayerControls.js'
 import { ObstacleSystem } from '../world/ObstacleSystem.js'
 import { AudioManager } from '../audio/AudioManager.js'
+import { isMobileDevice, loadGltfWithTimeout } from '../utils/assetLoading.js'
 
 const COLOR_SPACE_MAP = {
   SRGBColorSpace: THREE.SRGBColorSpace,
@@ -36,10 +37,13 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({
       antialias: RENDER_CONFIG.antialias,
       alpha: RENDER_CONFIG.alpha,
-      powerPreference: 'high-performance',
+      powerPreference: isMobileDevice() ? 'default' : 'high-performance',
       stencil: false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, RENDER_CONFIG.pixelRatioMax))
+    const pixelRatioCap = isMobileDevice()
+      ? Math.min(RENDER_CONFIG.pixelRatioMax ?? 1.25, 1)
+      : (RENDER_CONFIG.pixelRatioMax ?? 1.25)
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
     this.renderer.outputColorSpace = COLOR_SPACE_MAP[RENDER_CONFIG.colorSpace] ?? THREE.SRGBColorSpace
     this.renderer.toneMapping = TONE_MAPPING_MAP[RENDER_CONFIG.toneMapping.type] ?? THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = RENDER_CONFIG.toneMapping.exposure
@@ -175,19 +179,52 @@ export class Game {
   }
 
   async load(onProgress) {
-    if (typeof onProgress === 'function') {
-      this.loadingManager.onStart = (_, loaded, total) => {
-        const progress = total > 0 ? loaded / total : 0
-        onProgress({ loaded, total, progress })
-      }
-
-      this.loadingManager.onProgress = (_, loaded, total) => {
-        const progress = total > 0 ? loaded / total : 0
-        onProgress({ loaded, total, progress })
+    const mobile = isMobileDevice()
+    let phaseProgress = 0
+    const reportPhase = (done, total) => {
+      phaseProgress = done / total
+      if (typeof onProgress === 'function') {
+        onProgress({ loaded: done, total, progress: phaseProgress })
       }
     }
 
-    await Promise.all([this.road.load(), this.player.load(), this.loadSkyline(), this.obstacles.load()])
+    if (typeof onProgress === 'function') {
+      this.loadingManager.onStart = (_, loaded, total) => {
+        if (!mobile) {
+          const progress = total > 0 ? loaded / total : 0
+          onProgress({ loaded, total, progress })
+        }
+      }
+
+      this.loadingManager.onProgress = (_, loaded, total) => {
+        if (!mobile) {
+          const progress = total > 0 ? loaded / total : 0
+          onProgress({ loaded, total, progress })
+        }
+      }
+
+      this.loadingManager.onError = (url) => {
+        console.error('Failed to load asset:', url)
+      }
+    }
+
+    const loadSteps = mobile
+      ? [
+          () => this.road.load(),
+          () => this.player.load(),
+          () => this.loadSkyline(),
+          () => this.obstacles.load(),
+        ]
+      : null
+
+    if (loadSteps) {
+      for (let i = 0; i < loadSteps.length; i += 1) {
+        await loadSteps[i]()
+        reportPhase(i + 1, loadSteps.length)
+      }
+    } else {
+      await Promise.all([this.road.load(), this.player.load(), this.loadSkyline(), this.obstacles.load()])
+    }
     this.player.setLanePositions(this.road.getLanePositions())
     this.player.setRoadMeshes(this.road.getRoadMeshes())
     this.player.setStartPositionZ(-this.road.getSegmentLength() * 0.35)
@@ -219,9 +256,11 @@ export class Game {
     const skylineConfig = ROAD_CONFIG.skyline
     if (!skylineConfig?.enabled || !skylineConfig.modelUrl) return
 
-    const gltf = await new Promise((resolve, reject) => {
-      this.gltfLoader.load(skylineConfig.modelUrl, resolve, undefined, reject)
-    })
+    const gltf = await loadGltfWithTimeout(
+      this.gltfLoader,
+      skylineConfig.modelUrl,
+      isMobileDevice() ? 90000 : 45000,
+    )
 
     this.skyline = gltf.scene
     this.skyline.name = 'SkylineRing'
