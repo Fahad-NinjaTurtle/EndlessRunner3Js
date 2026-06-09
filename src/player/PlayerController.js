@@ -56,6 +56,12 @@ export class PlayerController {
     /** First session: idle preview faces camera; tap rotates to gameplayYaw */
     this.menuFacingActive = true;
     this.rotateToGameplayTimer = null;
+    /** Hood / platform tops from Rapier — player can stand and run on these */
+    this.platformSurfaces = [];
+  }
+
+  setPlatformSurfaces(surfaces) {
+    this.platformSurfaces = Array.isArray(surfaces) ? surfaces : [];
   }
 
   async load() {
@@ -481,6 +487,8 @@ export class PlayerController {
     const maxGroundY = referenceGroundY + this.config.collision.maxGroundStepUp;
     const minWalkableNormalY = 0.45;
 
+    let bestGroundY = null;
+
     for (const hit of this.raycastHits) {
       if (hit.face) {
         this.tmpNormalMatrix.getNormalMatrix(hit.object.matrixWorld);
@@ -492,7 +500,23 @@ export class PlayerController {
       if (candidateGroundY < minGroundY || candidateGroundY > maxGroundY) {
         continue;
       }
-      this.groundY = candidateGroundY;
+      if (bestGroundY == null || candidateGroundY > bestGroundY) {
+        bestGroundY = candidateGroundY;
+      }
+    }
+
+    for (const platform of this.platformSurfaces) {
+      const platformGroundY = platform.topY + this.currentHeight;
+      if (platformGroundY < minGroundY || platformGroundY > maxGroundY) {
+        continue;
+      }
+      if (bestGroundY == null || platformGroundY > bestGroundY) {
+        bestGroundY = platformGroundY;
+      }
+    }
+
+    if (bestGroundY != null) {
+      this.groundY = bestGroundY;
       return this.groundY;
     }
 
@@ -531,7 +555,14 @@ export class PlayerController {
 
   getCollisionData() {
     if (!this.group) {
-      return { position: new THREE.Vector3(), radius: 0.6, laneIndex: this.targetLane };
+      return {
+        position: new THREE.Vector3(),
+        radius: 0.6,
+        laneIndex: this.targetLane,
+        velocityY: 0,
+        isJumping: false,
+        currentHeight: this.currentHeight,
+      };
     }
 
     const radius = Math.max(0.45, this.currentHeight * 0.62);
@@ -539,6 +570,9 @@ export class PlayerController {
       position: this.group.position,
       radius,
       laneIndex: this.targetLane,
+      velocityY: this.velocityY,
+      isJumping: this.isJumping,
+      currentHeight: this.currentHeight,
     };
   }
 }

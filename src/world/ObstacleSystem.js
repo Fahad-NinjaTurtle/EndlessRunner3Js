@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { isMobileDevice, loadGltfWithTimeout } from '../utils/assetLoading.js'
+import { buildBoxColliderParts, buildCarColliderParts } from '../physics/PhysicsWorld.js'
 
 const DEFAULT_CONFIG = {
   spawnAheadMin: 40,
@@ -33,6 +34,7 @@ const DEFAULT_CONFIG = {
       movingTowardPlayerSpeed: 8.5,
       weight: 2.85,
       colliderScale: { x: 0.6, y: 0.5, z: 0.6 },
+      colliderKind: 'carCompound',
     },
     {
       id: 'tree',
@@ -121,8 +123,10 @@ function withMaterials(object, callback) {
   })
 }
 
+let nextPhysicsItemId = 1
+
 export class ObstacleSystem {
-  constructor(scene, loadingManager, config = DEFAULT_CONFIG) {
+  constructor(scene, loadingManager, config = DEFAULT_CONFIG, physicsWorld = null) {
     this.scene = scene
     this.config = {
       ...DEFAULT_CONFIG,
@@ -146,6 +150,7 @@ export class ObstacleSystem {
       obstacleTypes: config?.obstacleTypes ?? DEFAULT_CONFIG.obstacleTypes,
     }
     this.loader = new GLTFLoader(loadingManager)
+    this.physics = physicsWorld
     this.enabled = false
     this.lanePositions = []
     this.roadMeshes = []
@@ -245,13 +250,46 @@ export class ObstacleSystem {
         Math.max(0.15, measured.z * (colliderScale.z ?? 0.5)),
       )
     }
+    let physicsParts = null
+    if (def.colliderKind === 'carCompound') {
+      physicsParts = buildCarColliderParts(measured, def.scale ?? 1)
+    } else if (def.colliderKind === 'beam') {
+      physicsParts = buildBoxColliderParts(
+        {
+          x: colliderHalfExtents.x,
+          y: colliderHalfExtents.y,
+          z: colliderHalfExtents.z,
+        },
+        {
+          x: colliderCenterOffset.x,
+          y: colliderCenterOffset.y,
+          z: colliderCenterOffset.z,
+        },
+      )
+    } else {
+      physicsParts = buildBoxColliderParts(
+        {
+          x: colliderHalfExtents.x,
+          y: colliderHalfExtents.y,
+          z: colliderHalfExtents.z,
+        },
+        { x: 0, y: colliderHalfExtents.y, z: 0 },
+      )
+    }
+
     return {
       ...def,
       prototype: root,
+      measuredSize: measured,
       baseRadius: Math.max(measured.x, measured.y, measured.z) * 0.5,
       colliderHalfExtents,
       colliderCenterOffset,
+      physicsParts,
     }
+  }
+
+  setPhysicsWorld(physicsWorld) {
+    this.physics = physicsWorld
   }
 
   setLanePositions(lanes) {
@@ -287,6 +325,7 @@ export class ObstacleSystem {
     this.activeObstacles.length = 0
     this.activeCoins.length = 0
     this.runTime = 0
+    if (this.physics) this.physics.clear()
     this.resetSpawnTimers()
   }
 
@@ -467,6 +506,7 @@ export class ObstacleSystem {
     const collisionOffset = loadedDef.colliderCenterOffset
       ? loadedDef.colliderCenterOffset.clone().multiplyScalar(spawnScale)
       : new THREE.Vector3()
+    const physicsId = `obs_${nextPhysicsItemId++}`
     const item = {
       typeId: loadedDef.id,
       groupId: loadedDef.obstacleGroupId ?? loadedDef.id,
@@ -479,6 +519,16 @@ export class ObstacleSystem {
       fadeDuration: isCoin ? this.config.coinFadeInDuration : this.config.obstacleFadeInDuration,
       fadeElapsed: 0,
       isCoin,
+      physicsId,
+    }
+
+    if (this.physics) {
+      const pos = { x, y, z }
+      if (isCoin) {
+        this.physics.createCoinCollider(physicsId, pos, radius)
+      } else if (loadedDef.physicsParts?.length) {
+        this.physics.createObstacleColliders(physicsId, pos, loadedDef.physicsParts)
+      }
     }
 
     if (isCoin) {
@@ -554,42 +604,80 @@ export class ObstacleSystem {
       }
     }
 
-    const playerRadius = playerData.radius
-    const playerHalfExtents = new THREE.Vector3(playerRadius * 0.45, playerRadius * 0.95, playerRadius * 0.62)
+    for (const obstacle of this.activeObstacles) {
+      if (!this.physics || !obstacle.physicsId) continue
+      const p = obstacle.model.position
+      this.physics.syncObstacle(obstacle.physicsId, { x: p.x, y: p.y, z: p.z })
+    }
+    for (const coin of this.activeCoins) {
+      if (!this.physics || !coin.physicsId) continue
+      const p = coin.model.position
+      this.physics.syncCoin(coin.physicsId, { x: p.x, y: p.y, z: p.z })
+    }
+
     let hit = false
     let collected = 0
     const pickupPositions = []
-    for (const obstacle of this.activeObstacles) {
-      const off = obstacle.collisionOffset
-      const ox = obstacle.model.position.x + (off?.x ?? 0)
-      const oy = obstacle.model.position.y + (off?.y ?? 0)
-      const oz = obstacle.model.position.z + (off?.z ?? 0)
-      const dx = Math.abs(ox - playerPosition.x)
-      const dy = Math.abs(oy - playerPosition.y)
-      const dz = Math.abs(oz - playerPosition.z)
-      const obstacleHalf = obstacle.halfExtents
-      const overlapsX = dx <= playerHalfExtents.x + (obstacleHalf?.x ?? obstacle.radius)
-      const overlapsY = dy <= playerHalfExtents.y + (obstacleHalf?.y ?? obstacle.radius)
-      const overlapsZ = dz <= playerHalfExtents.z + (obstacleHalf?.z ?? obstacle.radius)
-      if (overlapsX && overlapsY && overlapsZ) {
-        hit = true
-        break
+    let platformSurfaces = []
+
+    if (this.physics) {
+      const physicsResult = this.physics.detectCollisions(playerData)
+      hit = physicsResult.hit
+      platformSurfaces = physicsResult.platformSurfaces ?? []
+
+      if (physicsResult.collectedCoinIds?.length) {
+        const collectedSet = new Set(physicsResult.collectedCoinIds)
+        this.activeCoins = this.activeCoins.filter((coin) => {
+          if (!collectedSet.has(coin.physicsId)) return true
+          collected += 1
+          pickupPositions.push(coin.model.position.clone())
+          this._despawn(coin, true)
+          return false
+        })
       }
+    } else {
+      const playerRadius = playerData.radius
+      const playerHalfExtents = new THREE.Vector3(
+        playerRadius * 0.45,
+        playerRadius * 0.95,
+        playerRadius * 0.62,
+      )
+      for (const obstacle of this.activeObstacles) {
+        const off = obstacle.collisionOffset
+        const ox = obstacle.model.position.x + (off?.x ?? 0)
+        const oy = obstacle.model.position.y + (off?.y ?? 0)
+        const oz = obstacle.model.position.z + (off?.z ?? 0)
+        const dx = Math.abs(ox - playerPosition.x)
+        const dy = Math.abs(oy - playerPosition.y)
+        const dz = Math.abs(oz - playerPosition.z)
+        const obstacleHalf = obstacle.halfExtents
+        const overlapsX = dx <= playerHalfExtents.x + (obstacleHalf?.x ?? obstacle.radius)
+        const overlapsY = dy <= playerHalfExtents.y + (obstacleHalf?.y ?? obstacle.radius)
+        const overlapsZ = dz <= playerHalfExtents.z + (obstacleHalf?.z ?? obstacle.radius)
+        if (overlapsX && overlapsY && overlapsZ) {
+          hit = true
+          break
+        }
+      }
+
+      this.activeCoins = this.activeCoins.filter((coin) => {
+        const distance = coin.model.position.distanceTo(playerPosition)
+        if (distance >= playerRadius + coin.radius) return true
+        collected += 1
+        pickupPositions.push(coin.model.position.clone())
+        this._despawn(coin, true)
+        return false
+      })
     }
 
-    this.activeCoins = this.activeCoins.filter((coin) => {
-      const distance = coin.model.position.distanceTo(playerPosition)
-      if (distance >= playerRadius + coin.radius) return true
-      collected += 1
-      pickupPositions.push(coin.model.position.clone())
-      this._despawn(coin, true)
-      return false
-    })
-
-    return { hit, collected, pickupPositions }
+    return { hit, collected, pickupPositions, platformSurfaces }
   }
 
   _despawn(item) {
+    if (this.physics && item.physicsId) {
+      if (item.isCoin) this.physics.removeCoin(item.physicsId)
+      else this.physics.removeObstacle(item.physicsId)
+    }
     this._release(item)
   }
 }

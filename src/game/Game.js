@@ -11,6 +11,7 @@ import { PlayerController } from '../player/PlayerController.js'
 import { RoadManager } from '../road/RoadManager.js'
 import { PlayerControls } from '../input/PlayerControls.js'
 import { ObstacleSystem } from '../world/ObstacleSystem.js'
+import { PhysicsWorld } from '../physics/PhysicsWorld.js'
 import { AudioManager } from '../audio/AudioManager.js'
 import { isMobileDevice, loadGltfWithTimeout } from '../utils/assetLoading.js'
 
@@ -34,16 +35,16 @@ export class Game {
     )
     this.loadingManager = new THREE.LoadingManager()
     this.gltfLoader = new GLTFLoader(this.loadingManager)
+    const mobile = isMobileDevice()
     this.renderer = new THREE.WebGLRenderer({
-      antialias: RENDER_CONFIG.antialias,
+      antialias: mobile
+        ? (RENDER_CONFIG.antialiasMobile ?? true)
+        : RENDER_CONFIG.antialias,
       alpha: RENDER_CONFIG.alpha,
-      powerPreference: isMobileDevice() ? 'default' : 'high-performance',
+      powerPreference: mobile ? 'default' : 'high-performance',
       stencil: false,
     })
-    const pixelRatioCap = isMobileDevice()
-      ? Math.min(RENDER_CONFIG.pixelRatioMax ?? 1.25, 1)
-      : (RENDER_CONFIG.pixelRatioMax ?? 1.25)
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
+    this._applyRendererPixelRatio()
     this.renderer.outputColorSpace = COLOR_SPACE_MAP[RENDER_CONFIG.colorSpace] ?? THREE.SRGBColorSpace
     this.renderer.toneMapping = TONE_MAPPING_MAP[RENDER_CONFIG.toneMapping.type] ?? THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = RENDER_CONFIG.toneMapping.exposure
@@ -77,9 +78,10 @@ export class Game {
     this.skylineBaseY = 0
     addRunnerLights(this.scene)
 
+    this.physics = new PhysicsWorld()
     this.player = new PlayerController(this.scene, PLAYER_CONFIG, this.loadingManager)
     this.road = new RoadManager(this.scene, ROAD_CONFIG, this.loadingManager)
-    this.obstacles = new ObstacleSystem(this.scene, this.loadingManager)
+    this.obstacles = new ObstacleSystem(this.scene, this.loadingManager, undefined, this.physics)
     this.controls = new PlayerControls(CONTROLS_CONFIG, {
       left: () => this._playerAction(() => this.player.moveLeft()),
       right: () => this._playerAction(() => this.player.moveRight()),
@@ -207,6 +209,8 @@ export class Game {
         console.error('Failed to load asset:', url)
       }
     }
+
+    await this.physics.init()
 
     const loadSteps = mobile
       ? [
@@ -544,9 +548,21 @@ export class Game {
     this.camera.position.set(0, this.cameraBaseY, this.cameraBaseZ)
   }
 
+  _getPixelRatioCap() {
+    return isMobileDevice()
+      ? (RENDER_CONFIG.pixelRatioMaxMobile ?? 2)
+      : (RENDER_CONFIG.pixelRatioMax ?? 1.25)
+  }
+
+  _applyRendererPixelRatio() {
+    const cap = this._getPixelRatioCap()
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap))
+  }
+
   resize() {
     const width = this.app.clientWidth || window.innerWidth
     const height = this.app.clientHeight || window.innerHeight
+    this._applyRendererPixelRatio()
     this.renderer.setSize(width, height, false)
     this.camera.aspect = width / height
     // Wider vertical FOV on portrait/narrow screens so all lanes stay visible (no lateral camera pan)
@@ -603,16 +619,18 @@ export class Game {
     if (simulationActive) {
       speed = this.player.getCurrentSpeed()
       this.road.update(dt, speed, this.camera.position.z)
-      this.player.update(dt)
       this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
       collisionState = this.obstacles.update(dt, speed, this.player.getCollisionData())
+      this.player.setPlatformSurfaces(collisionState.platformSurfaces ?? [])
+      this.player.update(dt)
       this.runDistance += speed * dt
       if (typeof this.onDistanceChange === 'function') this.onDistanceChange(this.runDistance)
     } else if (!this.isRunning) {
       this.road.update(dt, 0, this.camera.position.z)
-      this.player.update(dt)
       this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
       collisionState = this.obstacles.update(dt, 0, this.player.getCollisionData())
+      this.player.setPlatformSurfaces(collisionState.platformSurfaces ?? [])
+      this.player.update(dt)
     } else {
       this.road.update(dt, 0, this.camera.position.z)
     }
