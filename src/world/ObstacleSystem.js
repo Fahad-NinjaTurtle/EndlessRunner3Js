@@ -11,6 +11,7 @@ const DEFAULT_CONFIG = {
   /** Extra space between car centers on the same lane (world units) — avoids nose-to-tail overlap */
   sameLaneCarGap: 5.5,
   obstacleSpawnInterval: { min: 0.38, max: 0.82 },
+  obstacleSpawnIntervalMobile: { min: 0.48, max: 0.95 },
   coinSpawnInterval: { min: 0.2, max: 0.45 },
   obstacleFadeInDuration: 0.22,
   coinFadeInDuration: 0.16,
@@ -347,9 +348,13 @@ export class ObstacleSystem {
     const t = this._getDifficultyProgress()
     const obstacleScale = THREE.MathUtils.lerp(1, this.config.difficulty.obstacleSpawnScaleMin, t)
     const coinScale = THREE.MathUtils.lerp(1, 0.85, t)
+    const mobile = isMobileDevice()
+    const obstacleInterval = mobile
+      ? (this.config.obstacleSpawnIntervalMobile ?? this.config.obstacleSpawnInterval)
+      : this.config.obstacleSpawnInterval
     return {
-      obstacleMin: this.config.obstacleSpawnInterval.min * obstacleScale,
-      obstacleMax: this.config.obstacleSpawnInterval.max * obstacleScale,
+      obstacleMin: obstacleInterval.min * obstacleScale,
+      obstacleMax: obstacleInterval.max * obstacleScale,
       coinMin: this.config.coinSpawnInterval.min * coinScale,
       coinMax: this.config.coinSpawnInterval.max * coinScale,
     }
@@ -408,8 +413,8 @@ export class ObstacleSystem {
   _setOpacity(model, opacity) {
     const clamped = THREE.MathUtils.clamp(opacity, 0, 1)
     withMaterials(model, (material) => {
+      if (Math.abs(material.opacity - clamped) < 0.02) return
       material.opacity = clamped
-      material.needsUpdate = true
     })
   }
 

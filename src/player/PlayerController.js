@@ -59,6 +59,30 @@ export class PlayerController {
     this.rotateToGameplayTimer = null;
     /** Hood / platform tops from Rapier — player can stand and run on these */
     this.platformSurfaces = [];
+    this._groundSampleFrame = -1;
+    this._groundSampleY = null;
+  }
+
+  _groundDeadband() {
+    const mobile = isMobileDevice();
+    return mobile
+      ? (this.config.collision.groundDeadbandMobile ?? 0.14)
+      : (this.config.collision.groundDeadband ?? 0.08);
+  }
+
+  _groundLerp() {
+    const mobile = isMobileDevice();
+    return mobile
+      ? (this.config.collision.groundLerpMobile ?? 0.14)
+      : (this.config.collision.groundLerp ?? 0.22);
+  }
+
+  /** Lane-centre X for ground probes — avoids seam jitter from per-frame lane drift offset */
+  _groundProbeX() {
+    if (this.lanePositions.length) {
+      return this.lanePositions[this.targetLane] ?? this.group.position.x;
+    }
+    return this.group.position.x;
   }
 
   setPlatformSurfaces(surfaces) {
@@ -372,7 +396,7 @@ export class PlayerController {
     this._setAction("run", 0.1);
   }
 
-  update(deltaTime) {
+  update(deltaTime, frameId = 0) {
     if (!this.group) return;
 
     this._updateRotateToGameplay(deltaTime);
@@ -395,7 +419,7 @@ export class PlayerController {
 
     this._updateSpeed(deltaTime);
     this._updateLane(deltaTime);
-    this._updateVertical(deltaTime);
+    this._updateVertical(deltaTime, frameId);
     this._updateJumpChainFromRoll(deltaTime);
     if (this.mixer) this.mixer.update(deltaTime);
   }
@@ -437,25 +461,34 @@ export class PlayerController {
 
   _stabilizeGroundY(candidate) {
     if (candidate == null) return this.groundY || this.positionY;
-    const deadband = this.config.collision.groundDeadband ?? 0.08;
+    const deadband = this._groundDeadband();
     const reference = this.groundY || this.positionY;
     if (Math.abs(candidate - reference) < deadband) return reference;
     return candidate;
   }
 
+  _sampleGroundY(frameId) {
+    if (this._groundSampleFrame === frameId && this._groundSampleY != null) {
+      return this._groundSampleY;
+    }
+    this._groundSampleFrame = frameId;
+    this._groundSampleY = this._getGroundY();
+    return this._groundSampleY;
+  }
+
   /** Same vertical settle as when running on flat ground — keeps menu/idle Y aligned with gameplay. */
-  _syncGroundHeightWhileGrounded() {
-    const groundY = this._getGroundY();
+  _syncGroundHeightWhileGrounded(frameId) {
+    const groundY = this._sampleGroundY(frameId);
     const delta = Math.abs(this.positionY - groundY);
-    const deadband = this.config.collision.groundDeadband ?? 0.08;
+    const deadband = this._groundDeadband();
     if (delta < deadband * 0.35) return;
-    const lerp = this.config.collision.groundLerp ?? 0.22;
+    const lerp = this._groundLerp();
     this.positionY = THREE.MathUtils.lerp(this.positionY, groundY, lerp);
     if (delta < 0.01) this.positionY = groundY;
   }
 
-  _updateVertical(deltaTime) {
-    const groundY = this._getGroundY();
+  _updateVertical(deltaTime, frameId = 0) {
+    const groundY = this._sampleGroundY(frameId);
 
     if (this.isJumping) {
       this.jumpElapsed += deltaTime;
@@ -469,7 +502,7 @@ export class PlayerController {
         this._finishJumpLanding();
       }
     } else {
-      this._syncGroundHeightWhileGrounded();
+      this._syncGroundHeightWhileGrounded(frameId);
     }
 
     if (this.isRolling) {
@@ -493,7 +526,7 @@ export class PlayerController {
     if (!this.roadMeshes.length) return this.groundY || this.currentHeight;
 
     this.tmpOrigin.set(
-      this.group.position.x,
+      this._groundProbeX(),
       this.config.collision.castDistance,
       this.group.position.z,
     );
@@ -528,6 +561,7 @@ export class PlayerController {
 
     const playerHalfX = this.currentHeight * 0.45;
     const playerHalfZ = this.currentHeight * 0.62;
+    const surfaceUnderFeet = this.positionY - this.currentHeight;
 
     for (const platform of this.platformSurfaces) {
       const overlapX =
@@ -537,6 +571,13 @@ export class PlayerController {
         platform.halfZ == null ||
         Math.abs(this.group.position.z - platform.z) <= platform.halfZ + playerHalfZ;
       if (!overlapX || !overlapZ) continue;
+
+      const onHood = surfaceUnderFeet >= platform.topY - 0.24;
+      const landingOnHood =
+        this.isJumping &&
+        this.velocityY <= 0 &&
+        surfaceUnderFeet >= platform.topY - 0.3;
+      if (!onHood && !landingOnHood) continue;
 
       const platformGroundY = platform.topY + this.currentHeight;
       if (platformGroundY < minGroundY || platformGroundY > maxGroundY) continue;

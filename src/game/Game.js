@@ -26,16 +26,19 @@ const TONE_MAPPING_MAP = {
 export class Game {
   constructor(app) {
     this.app = app
+    const mobile = isMobileDevice()
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(ROAD_CONFIG.backgroundColor ?? ROAD_CONFIG.fogColor ?? 0xbfd9ff)
+    const fogFar = mobile
+      ? Math.min(ROAD_CONFIG.fogFar ?? 52, 72)
+      : (ROAD_CONFIG.fogFar ?? 52)
     this.scene.fog = new THREE.Fog(
       ROAD_CONFIG.fogColor ?? 0xbfd9ff,
       ROAD_CONFIG.fogNear ?? 14,
-      ROAD_CONFIG.fogFar ?? 52,
+      fogFar,
     )
     this.loadingManager = new THREE.LoadingManager()
     this.gltfLoader = new GLTFLoader(this.loadingManager)
-    const mobile = isMobileDevice()
     this.renderer = new THREE.WebGLRenderer({
       antialias: mobile
         ? (RENDER_CONFIG.antialiasMobile ?? true)
@@ -50,6 +53,7 @@ export class Game {
     this.renderer.toneMappingExposure = RENDER_CONFIG.toneMapping.exposure
     this.renderer.useLegacyLights = RENDER_CONFIG.useLegacyLights
     this.app.appendChild(this.renderer.domElement)
+    this._bindWebGLContextHandlers()
 
     this.cameraFovLandscape = ROAD_CONFIG.cameraFovLandscape ?? 55
     this.cameraFovPortrait = ROAD_CONFIG.cameraFovPortrait ?? 68
@@ -63,7 +67,12 @@ export class Game {
     this.scene.add(this.camera)
 
     this.clock = new THREE.Clock()
-    this.targetFrameTime = 1 / Math.max(10, RENDER_CONFIG.targetFPS ?? 45)
+    const targetFps = mobile
+      ? (RENDER_CONFIG.targetFPSMobile ?? 45)
+      : (RENDER_CONFIG.targetFPS ?? 60)
+    this.targetFrameTime = 1 / Math.max(10, targetFps)
+    this.simulationFrame = 0
+    this.contextLost = false
     this.timeAccumulator = 0
     this.lastFrameTime = performance.now()
     this.isPageVisible = document.visibilityState !== 'hidden'
@@ -367,7 +376,7 @@ export class Game {
   }
 
   createCoinSparkle(origin) {
-    const count = 18
+    const count = isMobileDevice() ? 10 : 18
     const positions = new Float32Array(count * 3)
     const velocities = new Float32Array(count * 3)
     const colors = new Float32Array(count * 3)
@@ -441,7 +450,7 @@ export class Game {
 
   createDeathBurst(origin) {
     this.clearDeathParticles()
-    const count = 64
+    const count = isMobileDevice() ? 36 : 64
     const positions = new Float32Array(count * 3)
     const velocities = new Float32Array(count * 3)
     const colors = new Float32Array(count * 3)
@@ -559,6 +568,36 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap))
   }
 
+  _bindWebGLContextHandlers() {
+    const canvas = this.renderer.domElement
+    this._onContextLost = (event) => {
+      event.preventDefault()
+      this.contextLost = true
+    }
+    this._onContextRestored = () => {
+      this.contextLost = false
+      this._refreshAfterContextRestore()
+    }
+    canvas.addEventListener('webglcontextlost', this._onContextLost, false)
+    canvas.addEventListener('webglcontextrestored', this._onContextRestored, false)
+  }
+
+  _refreshAfterContextRestore() {
+    this.scene.traverse((object) => {
+      if (!object?.isMesh) return
+      const materials = Array.isArray(object.material) ? object.material : [object.material]
+      for (const material of materials) {
+        if (!material) continue
+        for (const key of Object.keys(material)) {
+          const value = material[key]
+          if (value?.isTexture) value.needsUpdate = true
+        }
+        material.needsUpdate = true
+      }
+    })
+    this.renderer.compile(this.scene, this.camera)
+  }
+
   resize() {
     const width = this.app.clientWidth || window.innerWidth
     const height = this.app.clientHeight || window.innerHeight
@@ -576,6 +615,11 @@ export class Game {
     const elapsed = Math.min((now - this.lastFrameTime) / 1000, 0.1)
     this.lastFrameTime = now
 
+    if (this.contextLost) {
+      requestAnimationFrame((nextTime) => this.animate(nextTime))
+      return
+    }
+
     if (RENDER_CONFIG.pauseWhenHidden && !this.isPageVisible) {
       requestAnimationFrame((nextTime) => this.animate(nextTime))
       return
@@ -589,6 +633,7 @@ export class Game {
 
     const dt = Math.min(this.timeAccumulator, 0.05)
     this.timeAccumulator = 0
+    this.simulationFrame += 1
 
     if (this.resumeCountdownElapsed !== null) {
       this.resumeCountdownElapsed += dt
@@ -619,18 +664,16 @@ export class Game {
     if (simulationActive) {
       speed = this.player.getCurrentSpeed()
       this.road.update(dt, speed, this.camera.position.z)
-      this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
       collisionState = this.obstacles.update(dt, speed, this.player.getCollisionData())
       this.player.setPlatformSurfaces(collisionState.platformSurfaces ?? [])
-      this.player.update(dt)
+      this.player.update(dt, this.simulationFrame)
       this.runDistance += speed * dt
       if (typeof this.onDistanceChange === 'function') this.onDistanceChange(this.runDistance)
     } else if (!this.isRunning) {
       this.road.update(dt, 0, this.camera.position.z)
-      this.obstacles.setRoadMeshes(this.road.getRoadMeshes())
       collisionState = this.obstacles.update(dt, 0, this.player.getCollisionData())
       this.player.setPlatformSurfaces(collisionState.platformSurfaces ?? [])
-      this.player.update(dt)
+      this.player.update(dt, this.simulationFrame)
     } else {
       this.road.update(dt, 0, this.camera.position.z)
     }

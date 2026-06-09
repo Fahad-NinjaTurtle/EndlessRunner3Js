@@ -51,7 +51,9 @@ export const PLAYER_CONFIG = {
     maxGroundDrop: 8,
     /** Ignore tiny ground height jitter from scrolling road seams / physics */
     groundDeadband: 0.08,
+    groundDeadbandMobile: 0.14,
     groundLerp: 0.22,
+    groundLerpMobile: 0.14,
   },
   animations: {
     idle: 'RemadeIdle.002',

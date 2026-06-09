@@ -35,6 +35,17 @@ export class PhysicsWorld {
     this.colliderMeta = new Map()
     this._tmpTranslation = { x: 0, y: 0, z: 0 }
     this._tmpRotation = { w: 1, x: 0, y: 0, z: 0 }
+    this._queryShape = null
+    this._queryShapeKey = ''
+  }
+
+  _getQueryShape(hx, hy, hz) {
+    const key = `${hx.toFixed(3)}:${hy.toFixed(3)}:${hz.toFixed(3)}`
+    if (!this._queryShape || this._queryShapeKey !== key) {
+      this._queryShape = new this.RAPIER.Cuboid(hx, hy, hz)
+      this._queryShapeKey = key
+    }
+    return this._queryShape
   }
 
   _setColliderMeta(collider, meta) {
@@ -221,7 +232,7 @@ export class PhysicsWorld {
     const playerBottomY = pos.y - hy
     const playerTopY = pos.y + hy
 
-    const shape = new this.RAPIER.Cuboid(hx, hy, hz)
+    const shape = this._getQueryShape(hx, hy, hz)
     const shapePos = { x: pos.x, y: pos.y, z: pos.z }
     const shapeRot = { w: 1, x: 0, y: 0, z: 0 }
 
@@ -266,14 +277,14 @@ export class PhysicsWorld {
         const overlapZ = Math.abs(pos.z - platformZ) <= he.z + playerHalfZ
         if (!overlapX || !overlapZ) continue
 
-        const standingOnHood = surfaceUnderFeet >= topY - 0.28
+        const standingOnHood = surfaceUnderFeet >= topY - 0.26
         const landingOnHood =
           isJumping &&
-          velocityY <= 1.5 &&
-          surfaceUnderFeet > topY - 0.7
-        const approachingFromAbove = surfaceUnderFeet >= topY - 0.38
+          velocityY <= 0 &&
+          surfaceUnderFeet >= topY - 0.28 &&
+          surfaceUnderFeet <= topY + 0.12
 
-        if (standingOnHood || landingOnHood || approachingFromAbove) {
+        if (standingOnHood || landingOnHood) {
           onPlatformItems.add(userData.itemId)
           result.platformSurfaces.push({
             topY,

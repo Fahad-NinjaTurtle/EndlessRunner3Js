@@ -1,12 +1,13 @@
 export const RENDER_CONFIG = {
   antialias: false,
-  /** MSAA on touch devices — helps edges without the cost of full desktop AA */
-  antialiasMobile: true,
+  /** MSAA + high DPR exhausts mobile GPU memory and causes context loss (B/W flash) */
+  antialiasMobile: false,
   alpha: false,
   pixelRatioMax: 1.25,
-  /** Phones are often 2–3× DPR; capping at 1 made the canvas look very blocky */
-  pixelRatioMaxMobile: 2,
+  /** Balance sharpness vs GPU memory on phones */
+  pixelRatioMaxMobile: 1.5,
   targetFPS: 60,
+  targetFPSMobile: 45,
   pauseWhenHidden: true,
   toneMapping: {
     type: 'ACESFilmicToneMapping',
