@@ -216,6 +216,8 @@ export class PhysicsWorld {
     const hz = radius * 0.62
     const velocityY = playerData.velocityY ?? 0
     const isJumping = Boolean(playerData.isJumping)
+    const characterHeight = playerData.currentHeight ?? 0.55
+    const surfaceUnderFeet = pos.y - characterHeight
     const playerBottomY = pos.y - hy
     const playerTopY = pos.y + hy
 
@@ -256,14 +258,31 @@ export class PhysicsWorld {
       const bottomY = centerY - he.y
 
       if (userData.kind === 'platform') {
-        const landingFromAbove =
-          playerBottomY >= topY - 0.35 ||
-          (isJumping && velocityY <= 1.5 && playerBottomY > topY - 0.65)
-        const aboveHood = playerBottomY >= topY - 0.2
+        const playerHalfX = hx
+        const playerHalfZ = hz
+        const platformX = bodyPos.x + off.x
+        const platformZ = bodyPos.z + off.z
+        const overlapX = Math.abs(pos.x - platformX) <= he.x + playerHalfX
+        const overlapZ = Math.abs(pos.z - platformZ) <= he.z + playerHalfZ
+        if (!overlapX || !overlapZ) continue
 
-        if (landingFromAbove || aboveHood) {
+        const standingOnHood = surfaceUnderFeet >= topY - 0.28
+        const landingOnHood =
+          isJumping &&
+          velocityY <= 1.5 &&
+          surfaceUnderFeet > topY - 0.7
+        const approachingFromAbove = surfaceUnderFeet >= topY - 0.38
+
+        if (standingOnHood || landingOnHood || approachingFromAbove) {
           onPlatformItems.add(userData.itemId)
-          result.platformSurfaces.push({ topY, itemId: userData.itemId })
+          result.platformSurfaces.push({
+            topY,
+            itemId: userData.itemId,
+            x: platformX,
+            z: platformZ,
+            halfX: he.x,
+            halfZ: he.z,
+          })
         }
         continue
       }

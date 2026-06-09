@@ -41,12 +41,17 @@ export const PLAYER_CONFIG = {
     interruptToJumpChain: 0.055,
     /** Jump crossfade after that snap (snappy takeoff) */
     interruptJumpFade: 0.09,
+    /** Ignore slide during early jump ascent — blocks phantom touch/keyboard slide */
+    minJumpTimeBeforeSlide: 0.14,
   },
   collision: {
     halfHeight: 0.55,
     castDistance: 60,
     maxGroundStepUp: 2.5,
     maxGroundDrop: 8,
+    /** Ignore tiny ground height jitter from scrolling road seams / physics */
+    groundDeadband: 0.08,
+    groundLerp: 0.22,
   },
   animations: {
     idle: 'RemadeIdle.002',
